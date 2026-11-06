@@ -10,42 +10,56 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
-const clipSeconds = 60
+// maxSeconds is the most audio of one song that is analysed. A song fits
+// whole; of a longer track (a mix, an album) the middle stretch is used.
+const maxSeconds = 600
 
-// clipStart picks where in the song to take the analysed minute from: past
-// the intro for normal songs, the middle for shorter ones.
-func clipStart(duration float64) int {
-	switch {
-	case duration <= 0 || duration >= 40+clipSeconds+10:
-		return 40
-	case duration > clipSeconds:
-		return int((duration - clipSeconds) / 2)
+// fetchBudget is how long fetching the audio may take. A song arrives in a
+// few seconds, but some streams are delivered at only about twice real time.
+// The audio that has arrived when the time is up is analysed, if there is
+// enough of it.
+var fetchBudget = 45 * time.Second
+
+// windowStart is where in the track to start reading: at the beginning, unless
+// the track is longer than maxSeconds, then so that the middle is read.
+func windowStart(duration float64) int {
+	if duration <= maxSeconds {
+		return 0
 	}
-	return 0
+	return int((duration - maxSeconds) / 2)
 }
 
 // decode lets mpv (already required by ytplay, and already able to play
 // YouTube through yt-dlp) write length seconds of the stream, starting at
-// start, as raw mono float PCM at SampleRate. This runs faster than playback.
+// start, as raw mono float PCM at SampleRate. This usually runs far faster
+// than playback; after fetchBudget whatever has arrived is used.
 func decode(ctx context.Context, mpvPath, ytdlpPath, url string, start, length int) ([]float32, error) {
+	runCtx, cancel := context.WithTimeout(ctx, fetchBudget)
+	defer cancel()
 	// The PCM goes to stdout: no temp file to leave behind, and mpv gets
 	// SIGPIPE and stops by itself if ytplay is gone.
-	cmd := exec.CommandContext(ctx, mpvPath,
+	cmd := exec.CommandContext(runCtx, mpvPath,
 		"--no-config", "--no-video", "--no-terminal", "--really-quiet", "--idle=no",
 		"--ao=pcm", "--ao-pcm-file=/dev/stdout", "--ao-pcm-waveheader=no",
 		"--audio-channels=mono", "--audio-samplerate="+strconv.Itoa(SampleRate), "--audio-format=float",
 		"--start="+strconv.Itoa(start), "--length="+strconv.Itoa(length),
 		"--script-opts=ytdl_hook-ytdl_path="+ytdlpPath, "--ytdl-format=bestaudio/best",
 		url)
+	cmd.WaitDelay = 2 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
+		switch {
+		case ctx.Err() != nil:
 			return nil, fmt.Errorf("decode audio: %w", ctx.Err())
+		case runCtx.Err() != nil && stdout.Len() >= minSeconds*SampleRate*4:
+			// Out of time, but enough audio has arrived to be worth analysing.
+		default:
+			return nil, fmt.Errorf("decode audio: %w (%s)", err, strings.TrimSpace(stderr.String()))
 		}
-		return nil, fmt.Errorf("decode audio: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	raw := stdout.Bytes()
 	pcm := make([]float32, len(raw)/4)
@@ -58,15 +72,15 @@ func decode(ctx context.Context, mpvPath, ytdlpPath, url string, start, length i
 	return pcm, nil
 }
 
-// Fetch returns about a minute of audio of a YouTube video as PCM. duration
-// (seconds, 0 if unknown) decides which minute. If that part does not exist
-// the beginning of the song is used instead.
+// Fetch returns the audio of a YouTube video as PCM: all of it, or the middle
+// maxSeconds of a longer track. duration (seconds, 0 if unknown) decides
+// which. If that part does not exist the beginning is used instead.
 func Fetch(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64) ([]float32, error) {
 	url := "https://www.youtube.com/watch?v=" + id
-	start := clipStart(duration)
-	pcm, err := decode(ctx, mpvPath, ytdlpPath, url, start, clipSeconds)
+	start := windowStart(duration)
+	pcm, err := decode(ctx, mpvPath, ytdlpPath, url, start, maxSeconds)
 	if (err != nil || len(pcm) < minSeconds*SampleRate) && start > 0 && ctx.Err() == nil {
-		if retry, rerr := decode(ctx, mpvPath, ytdlpPath, url, 0, clipSeconds); rerr == nil {
+		if retry, rerr := decode(ctx, mpvPath, ytdlpPath, url, 0, maxSeconds); rerr == nil {
 			return retry, nil
 		}
 	}

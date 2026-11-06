@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeMpv writes a shell script that logs its arguments (one invocation per
@@ -85,12 +86,33 @@ func TestDecodeStopsWhenContextIsCancelled(t *testing.T) {
 	}
 }
 
-func TestFetchRetriesFromTheBeginningWhenTheClipIsTooShort(t *testing.T) {
-	// Starting at 40 s yields almost nothing (song shorter than expected);
-	// starting at 0 yields 12 s of (silent) audio.
+func TestFetchTakesTheWholeSong(t *testing.T) {
+	for _, tt := range []struct {
+		duration float64
+		start    string
+	}{
+		{0, "--start=0 "},     // unknown length
+		{240, "--start=0 "},   // a normal song: from the very beginning
+		{600, "--start=0 "},   // exactly the longest stretch
+		{2000, "--start=700"}, // a long mix: the middle stretch
+	} {
+		mpv, logFile := fakeMpv(t, `head -c 1058400 /dev/zero > "$file"`)
+		if _, err := Fetch(context.Background(), mpv, "yt-dlp", "abc", tt.duration); err != nil {
+			t.Fatal(err)
+		}
+		args := readLog(t, logFile)[0] + " "
+		if !strings.Contains(args, strings.TrimSpace(tt.start)+" ") || !strings.Contains(args, "--length=600 ") {
+			t.Errorf("duration %v: invocation = %q, want %s and --length=600", tt.duration, args, tt.start)
+		}
+	}
+}
+
+func TestFetchRetriesFromTheBeginningWhenTheMiddleIsMissing(t *testing.T) {
+	// The long mix is shorter than announced: the middle yields almost
+	// nothing, the beginning yields 12 s of (silent) audio.
 	mpv, logFile := fakeMpv(t, `
 if [ "$start" = "0" ]; then head -c 1058400 /dev/zero > "$file"; else head -c 400 /dev/zero > "$file"; fi`)
-	pcm, err := Fetch(context.Background(), mpv, "yt-dlp", "abc", 0) // unknown duration -> start at 40
+	pcm, err := Fetch(context.Background(), mpv, "yt-dlp", "abc", 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,27 +120,58 @@ if [ "$start" = "0" ]; then head -c 1058400 /dev/zero > "$file"; else head -c 40
 		t.Errorf("got %d samples", len(pcm))
 	}
 	log := readLog(t, logFile)
-	if len(log) != 2 || !strings.Contains(log[0], "--start=40") || !strings.Contains(log[1], "--start=0") {
+	if len(log) != 2 || !strings.Contains(log[0], "--start=700") || !strings.Contains(log[1], "--start=0") {
 		t.Errorf("invocations = %q", log)
 	}
 }
 
-func TestClipStart(t *testing.T) {
+func TestWindowStart(t *testing.T) {
 	tests := []struct {
 		duration float64
 		want     int
 	}{
-		{0, 40},    // unknown: assume a normal song
-		{240, 40},  // normal song: skip the intro
-		{110, 40},  // exactly long enough
-		{90, 15},   // shorter: take the middle minute
-		{60, 0},    // exactly the clip length
-		{45, 0},    // shorter than the clip
-		{4000, 40}, // long mix: still near the start
+		{0, 0},      // unknown: from the beginning
+		{240, 0},    // a normal song
+		{600, 0},    // exactly the longest stretch
+		{601, 0},    // 0.5 s off the middle rounds down
+		{1200, 300}, // a long track: the middle ten minutes
+		{4000, 1700},
 	}
 	for _, tt := range tests {
-		if got := clipStart(tt.duration); got != tt.want {
-			t.Errorf("clipStart(%v) = %d, want %d", tt.duration, got, tt.want)
+		if got := windowStart(tt.duration); got != tt.want {
+			t.Errorf("windowStart(%v) = %d, want %d", tt.duration, got, tt.want)
 		}
+	}
+}
+
+func withFetchBudget(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := fetchBudget
+	fetchBudget = d
+	t.Cleanup(func() { fetchBudget = old })
+}
+
+func TestDecodeKeepsTheAudioThatArrivedWithinTheBudget(t *testing.T) {
+	// A slow stream: 12 s of audio arrive, then nothing for a long time.
+	withFetchBudget(t, 300*time.Millisecond)
+	mpv, _ := fakeMpv(t, `head -c 1058400 /dev/zero > "$file"; exec sleep 5`)
+	start := time.Now()
+	pcm, err := decode(context.Background(), mpv, "yt-dlp", "u", 0, 600)
+	if err != nil {
+		t.Fatalf("the audio that arrived should be used, got %v", err)
+	}
+	if len(pcm) != 264600 {
+		t.Errorf("got %d samples", len(pcm))
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("took %v, the budget was not enforced", took)
+	}
+}
+
+func TestDecodeFailsWhenTooLittleArrivedWithinTheBudget(t *testing.T) {
+	withFetchBudget(t, 300*time.Millisecond)
+	mpv, _ := fakeMpv(t, `head -c 400 /dev/zero > "$file"; exec sleep 5`)
+	if _, err := decode(context.Background(), mpv, "yt-dlp", "u", 0, 600); err == nil {
+		t.Error("a second of audio is not enough to analyse")
 	}
 }
