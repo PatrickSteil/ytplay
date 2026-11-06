@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,11 +22,12 @@ import (
 type mode int
 
 const (
-	modeNormal  mode = iota // no widget focused
-	modeSearch              // search bar focused
-	modeResults             // results list focused
-	modeQueue               // queue panel focused (remove / reorder)
-	modeConfirm             // "clear the queue?" popup
+	modeNormal   mode = iota // no widget focused
+	modeSearch               // search bar focused
+	modeResults              // results list focused
+	modeQueue                // queue panel focused (remove / reorder)
+	modeConfirm              // "clear the queue?" popup
+	modeDownload             // "save to file" popup
 )
 
 // Actions is what the UI needs from the player (implemented by
@@ -59,6 +62,8 @@ type Deps struct {
 	// Analyze estimates tempo and key of a video of the given length in
 	// seconds (0 if unknown) (nil: none).
 	Analyze func(ctx context.Context, id string, duration float64) (analyze.Result, error)
+	// Download saves the audio of a video to a file (nil: no downloads).
+	Download func(ctx context.Context, id, path string) error
 	// Cover returns the rendered cover for a video ID (nil: no covers).
 	Cover func(ctx context.Context, id string) (string, error)
 }
@@ -127,6 +132,13 @@ type Model struct {
 	confirmFrom mode // where the clear-queue popup returns to
 	radioBusy   bool // a similar-songs lookup is running
 
+	// Download popup.
+	dlInput   textinput.Model
+	dlFrom    mode
+	dlTrack   yt.Result
+	dlOptions []string // completion candidates shown after Tab
+	dlWarn    string   // e.g. "file exists"; Enter again confirms
+
 	lastPub NowPlaying // last snapshot handed to Deps.Publish
 
 	searchSeq    int
@@ -148,8 +160,11 @@ func New(d Deps) Model {
 	ti := textinput.New()
 	ti.Prompt = "/ "
 	ti.CharLimit = 256
+	di := textinput.New()
+	di.Prompt = "> "
+	di.CharLimit = 512
 	return Model{
-		deps: d, input: ti, width: 80, height: 24,
+		deps: d, input: ti, dlInput: di, width: 80, height: 24,
 		tracks: map[string]yt.Result{}, pos: -1, idle: true,
 		covers: map[string]string{}, coverAsked: map[string]bool{},
 		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{},
@@ -250,6 +265,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case radioDoneMsg:
 		return m.handleRadioDone(msg)
+
+	case downloadDoneMsg:
+		if msg.err != nil {
+			return m, m.setStatus("Download failed: "+msg.err.Error(), true)
+		}
+		return m, m.setStatus("Saved "+msg.path, false)
 
 	case infoMsg:
 		if errors.Is(msg.err, context.Canceled) {
@@ -475,6 +496,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeConfirm {
 		return m.handleConfirmKey(k)
 	}
+	if m.mode == modeDownload {
+		return m.handleDownloadKey(msg)
+	}
 	if m.mode == modeSearch {
 		return m.handleSearchKey(msg)
 	}
@@ -575,13 +599,13 @@ func (m Model) handleSearchDone(msg searchDoneMsg) (tea.Model, tea.Cmd) {
 // false when the key should fall through to the global keys.
 func (m Model) handleResultsKey(k string) (Model, tea.Cmd, bool) {
 	switch k {
-	case keyDown, keyDownAlt:
+	case keyDown:
 		if m.selected < len(m.results)-1 {
 			m.selected++
 		}
 		m.scrollIntoView()
 		return m, nil, true
-	case keyUp, keyUpAlt:
+	case keyUp:
 		if m.selected > 0 {
 			m.selected--
 		}
@@ -612,6 +636,12 @@ func (m Model) handleResultsKey(k string) (Model, tea.Cmd, bool) {
 	case keyEsc:
 		m.mode = modeNormal
 		return m, nil, true
+	case keyDownload:
+		if len(m.results) == 0 {
+			return m, nil, true
+		}
+		next, cmd := m.openDownload(m.results[m.selected])
+		return next, cmd, true
 	}
 	return m, nil, false
 }
@@ -624,6 +654,14 @@ func (m Model) handleGlobalKey(k string) (tea.Model, tea.Cmd) {
 		m.input.CursorEnd()
 		m.replaceOnType = m.query != ""
 		return m, m.input.Focus()
+	case keyDownload:
+		e := m.currentEntry()
+		if e == nil {
+			return m, m.setStatus("Nothing is playing", false)
+		}
+		title, channel, dur := m.entryInfo(*e)
+		id := yt.VideoID(e.Filename)
+		return m.openDownload(yt.Result{ID: id, Title: title, Channel: channel, Duration: dur})
 	case keyRadio:
 		return m.startRadio()
 	case keyClearQueue:
@@ -871,4 +909,66 @@ func (m Model) handleConfirmKey(k string) (tea.Model, tea.Cmd) {
 		m.clampQueue()
 	}
 	return m, nil
+}
+
+// openDownload shows the "save to file" popup for a track.
+func (m Model) openDownload(r yt.Result) (Model, tea.Cmd) {
+	if m.deps.Download == nil {
+		return m, m.setStatus("Downloads are not available", true)
+	}
+	m.dlFrom, m.mode, m.dlTrack = m.mode, modeDownload, r
+	m.dlOptions, m.dlWarn = nil, ""
+	m.dlInput.SetValue(defaultDownloadPath(r.Title))
+	m.dlInput.CursorEnd()
+	m.dlInput.Width = max(min(64, m.width)-6, 10)
+	return m, m.dlInput.Focus()
+}
+
+// handleDownloadKey handles the popup: Tab completes the path, Enter saves
+// (twice if the file exists), Esc cancels.
+func (m Model) handleDownloadKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc:
+		m.mode = m.dlFrom
+		m.dlInput.Blur()
+		m.clampQueue()
+		return m, nil
+	case keyComplete:
+		done, opts := completePath(m.dlInput.Value())
+		m.dlInput.SetValue(done)
+		m.dlInput.CursorEnd()
+		m.dlOptions, m.dlWarn = nil, ""
+		if len(opts) > 1 {
+			m.dlOptions = opts
+		}
+		return m, nil
+	case keyEnter:
+		path := strings.TrimSpace(m.dlInput.Value())
+		if path == "" || strings.HasSuffix(path, "/") {
+			m.dlWarn = "Enter a file name"
+			return m, nil
+		}
+		path = expandHome(path)
+		base, format := yt.SplitAudioPath(path)
+		path = base + "." + format
+		if _, err := os.Stat(path); err == nil && m.dlWarn != "File exists - Enter again to overwrite" {
+			m.dlWarn = "File exists - Enter again to overwrite"
+			return m, nil
+		}
+		m.mode = m.dlFrom
+		m.dlInput.Blur()
+		m.clampQueue()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return m, m.setStatus(err.Error(), true)
+		}
+		m.setStickyStatus("Downloading " + safe(m.dlTrack.Title) + "…")
+		dl, id := m.deps.Download, m.dlTrack.ID
+		return m, func() tea.Msg {
+			return downloadDoneMsg{path: path, err: dl(context.Background(), id, path)}
+		}
+	}
+	m.dlOptions, m.dlWarn = nil, ""
+	var cmd tea.Cmd
+	m.dlInput, cmd = m.dlInput.Update(msg)
+	return m, cmd
 }

@@ -12,15 +12,15 @@ const (
 	keyQuit    = "Q"
 	keyCtrlC   = "ctrl+c"
 	keyDown    = "j"
-	keyDownAlt = "down"
 	keyUp      = "k"
-	keyUpAlt   = "up"
 	keySeekEnd = "=" // Shift+0 on a German keyboard
 
-	keyRadio      = "r" // add songs similar to the queue
-	keyClearQueue = "X" // clear the queue (asks first)
-	keyConfirm    = "y" // confirm in the popup
-	keyDeny       = "n" // decline in the popup (Esc too)
+	keyDownload   = "d"   // save a song to a file (popup asks where)
+	keyComplete   = "tab" // complete the path in the download popup
+	keyRadio      = "r"   // add songs similar to the queue
+	keyClearQueue = "X"   // clear the queue (asks first)
+	keyConfirm    = "y"   // confirm in the popup
+	keyDeny       = "n"   // decline in the popup (Esc too)
 
 	// Queue editing (modeQueue).
 	keyQueueFocus = "tab"  // focus / leave the queue panel

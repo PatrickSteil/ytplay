@@ -21,9 +21,10 @@ From a checkout: `make` builds, `make test` tests, `make install` installs to
 | Key | Action |
 | --- | --- |
 | `/` | search (Enter runs it, Esc closes the bar) |
-| `j` `k` / arrows | move in results |
+| `j` `k` | move in results |
 | Enter | play the selected result now |
 | `q` | append the selected result to the queue |
+| `d` | save the selected result (or the playing song) to a file; a popup asks for the path, Tab completes it (needs ffmpeg) |
 | `r` | add 20 songs similar to the queue |
 | Tab | edit the queue: `j` `k` select, `↑` `↓` move, `x` remove, Tab/Esc back |
 | `X` | clear the queue (asks first; the playing song keeps going) |

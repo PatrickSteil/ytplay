@@ -337,7 +337,7 @@ func (m Model) View() string {
 	} else {
 		v = m.viewStacked()
 	}
-	if m.mode == modeConfirm {
+	if m.mode == modeConfirm || m.mode == modeDownload {
 		v = m.withPopup(v)
 	}
 	return v
@@ -699,8 +699,37 @@ func (m Model) confirmBox() []string {
 	}
 }
 
+// downloadBox is the "save to file" popup.
+func (m Model) downloadBox() []string {
+	w := max(min(64, m.width)-2, 0)
+	row := func(s string) string { return accent.Render("│") + fit(" "+s, w) + accent.Render("│") }
+	title := " Save to file "
+	lines := []string{
+		accent.Render("┌") + bold.Render(clip(title, w)) + accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐"),
+		row(dim.Render(clip(safe(m.dlTrack.Title), w-2))),
+		row(m.dlInput.View()),
+	}
+	if m.dlWarn != "" {
+		lines = append(lines, row(accentB.Render(m.dlWarn)))
+	}
+	for i, o := range m.dlOptions {
+		if i == 4 {
+			lines = append(lines, row(dim.Render(fmt.Sprintf("… %d more", len(m.dlOptions)-4))))
+			break
+		}
+		lines = append(lines, row(dim.Render(clip(o, w-2))))
+	}
+	lines = append(lines,
+		row(dim.Render("tab complete   enter save   esc cancel")),
+		accent.Render("└"+strings.Repeat("─", w)+"┘"))
+	return lines
+}
+
 func (m Model) withPopup(view string) string {
 	box := m.confirmBox()
+	if m.mode == modeDownload {
+		box = m.downloadBox()
+	}
 	left := max((m.width-lipgloss.Width(box[0]))/2, 0)
 	top := max((m.height-len(box))/2, 0)
 	return strings.Join(overlay(strings.Split(view, "\n"), box, m.width, left, top), "\n")

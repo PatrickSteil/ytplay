@@ -115,6 +115,9 @@ func runTUI(ytdlp, mpvPath string) int {
 		Similar: func(ctx context.Context, seeds []string, exclude map[string]bool, n int) ([]yt.Result, error) {
 			return yt.Similar(ctx, ytdlp, seeds, exclude, n)
 		},
+		Download: func(ctx context.Context, id, path string) error {
+			return yt.Download(ctx, ytdlp, id, path)
+		},
 		Player: pl,
 		Position: func(ctx context.Context) (float64, float64, error) {
 			elapsed, err := client.GetFloat(ctx, "time-pos")

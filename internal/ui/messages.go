@@ -80,3 +80,9 @@ type analysisMsg struct {
 // statsDelay is how long a track must keep playing before its stats are
 // looked up, so skipping through songs does not start a lookup for each one.
 const statsDelay = 1200 * time.Millisecond
+
+// downloadDoneMsg is the result of saving a song to a file.
+type downloadDoneMsg struct {
+	path string
+	err  error
+}
