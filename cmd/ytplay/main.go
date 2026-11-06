@@ -78,21 +78,25 @@ func runTUI(ytdlp, mpvPath string) int {
 		fmt.Fprintln(os.Stderr, "ytplay: warning: COLORTERM is not truecolor/24bit; the cover image will look wrong")
 	}
 
-	client, err := mpv.Start(context.Background(), ytdlp)
+	pl, err := player.New(context.Background(), func(ctx context.Context, name string) (player.Deck, error) {
+		c, err := mpv.Start(ctx, ytdlp, name)
+		if err != nil {
+			return nil, err
+		}
+		if err := c.ObserveAll(); err != nil {
+			_ = c.Close()
+			return nil, err
+		}
+		return c, nil
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ytplay:", err)
 		return 1
 	}
-	defer client.Close()
-	if err := client.ObserveAll(); err != nil {
-		fmt.Fprintln(os.Stderr, "ytplay:", err)
-		return 1
-	}
-
-	pl := player.New(client)
+	defer pl.Close()
 	var publish func(ui.NowPlaying)
 	stop := make(chan struct{})
-	if srv, err := mpris.Start(mprisControls{pl}, func() time.Duration { return mpvPosition(client) }); err != nil {
+	if srv, err := mpris.Start(mprisControls{pl}, func() time.Duration { return playerPosition(pl) }); err != nil {
 		slog.Debug("MPRIS disabled", "err", err) // no session bus: carry on without it
 	} else {
 		defer srv.Close()
@@ -118,18 +122,8 @@ func runTUI(ytdlp, mpvPath string) int {
 		Download: func(ctx context.Context, id, path string) error {
 			return yt.Download(ctx, ytdlp, id, path)
 		},
-		Player: pl,
-		Position: func(ctx context.Context) (float64, float64, error) {
-			elapsed, err := client.GetFloat(ctx, "time-pos")
-			if err != nil {
-				return 0, 0, err
-			}
-			total, err := client.GetFloat(ctx, "duration")
-			if err != nil {
-				return 0, 0, err
-			}
-			return elapsed, total, nil
-		},
+		Player:   pl,
+		Position: pl.Position,
 	})
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
@@ -137,7 +131,7 @@ func runTUI(ytdlp, mpvPath string) int {
 	go func() { // forward mpv events to the UI
 		for {
 			select {
-			case ev := <-client.Events():
+			case ev := <-pl.Events():
 				slog.Debug("mpv event", "name", ev.Name, "prop", ev.Property, "reason", ev.Reason, "data", string(ev.Data))
 				p.Send(ui.MpvEventMsg{Event: ev})
 			case <-stop:
@@ -147,7 +141,7 @@ func runTUI(ytdlp, mpvPath string) int {
 	}()
 	go func() { // mpv died on its own?
 		select {
-		case <-client.Done():
+		case <-pl.Done():
 			if !quitting.Load() {
 				mpvDied.Store(true)
 				p.Send(ui.MpvExitedMsg{})
@@ -172,8 +166,8 @@ func runTUI(ytdlp, mpvPath string) int {
 	_, runErr := p.Run()
 	quitting.Store(true)
 	close(stop)
-	tail := strings.TrimSpace(client.StderrTail())
-	client.Close()
+	tail := strings.TrimSpace(pl.StderrTail())
+	pl.Close()
 
 	if mpvDied.Load() {
 		fmt.Fprintf(os.Stderr, "mpv exited: %s\n", tail)
@@ -206,15 +200,15 @@ func (c mprisControls) PlayPause() error {
 func (c mprisControls) Next() error { return c.do(c.p.Skip) }
 func (c mprisControls) Stop() error { return c.do(c.p.Stop) }
 
-// mpvPosition is the current playback position (0 when nothing is loaded).
-func mpvPosition(c *mpv.Client) time.Duration {
+// playerPosition is the current playback position (0 when nothing plays).
+func playerPosition(p *player.Player) time.Duration {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	sec, err := c.GetFloat(ctx, "time-pos")
+	elapsed, _, err := p.Position(ctx)
 	if err != nil {
 		return 0
 	}
-	return time.Duration(sec * float64(time.Second))
+	return time.Duration(elapsed * float64(time.Second))
 }
 
 // startPublisher returns a non-blocking publish function for the UI. A single

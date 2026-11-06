@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -208,5 +211,34 @@ func TestObserveSendsObserveProperty(t *testing.T) {
 	r := <-seen
 	if len(r.Command) != 3 || r.Command[0] != "observe_property" || r.Command[1] != float64(3) || r.Command[2] != "pause" {
 		t.Errorf("command = %v", r.Command)
+	}
+}
+
+func TestEndFileEventCarriesEntryID(t *testing.T) {
+	path := fakeServer(t, func(conn net.Conn) {
+		_, _ = conn.Write([]byte(`{"event":"end-file","reason":"eof","playlist_entry_id":7}` + "\n"))
+		_, _ = io.Copy(io.Discard, conn) // stay open until the client hangs up
+	})
+	c := dialFake(t, path)
+	select {
+	case ev := <-c.Events():
+		if ev.Name != "end-file" || ev.Reason != "eof" || ev.EntryID != 7 {
+			t.Errorf("event = %+v, want end-file eof with entry id 7", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no event delivered")
+	}
+}
+
+func TestSocketPathPerDeck(t *testing.T) {
+	a, b := SocketPath("a"), SocketPath("b")
+	if a == b {
+		t.Fatalf("both decks share %q", a)
+	}
+	if !strings.HasSuffix(a, "-a.sock") || !strings.HasSuffix(b, "-b.sock") {
+		t.Errorf("paths = %q, %q", a, b)
+	}
+	if !strings.Contains(a, strconv.Itoa(os.Getpid())) {
+		t.Errorf("%q does not contain the pid", a)
 	}
 }

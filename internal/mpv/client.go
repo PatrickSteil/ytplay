@@ -24,6 +24,10 @@ type Event struct {
 	Property string          // property name for property-change
 	Data     json.RawMessage // "data" field (property-change)
 	Reason   string          // "reason" of end-file; "error" means the file failed to load
+	// EntryID is the "playlist_entry_id" of end-file: the id loadfile returned
+	// for the file that ended, so a late event of an earlier file can be told
+	// from one of the current file.
+	EntryID int64
 }
 
 // CommandError is mpv's rejection of a command (e.g. "property unavailable"),
@@ -69,6 +73,7 @@ type wireMsg struct {
 	Event     string          `json:"event"`
 	Name      string          `json:"name"`
 	Reason    string          `json:"reason"`
+	EntryID   int64           `json:"playlist_entry_id"`
 }
 
 func newClient(conn net.Conn) *Client {
@@ -129,7 +134,7 @@ func (c *Client) handleLine(line []byte) {
 	if m.Event == "" {
 		return
 	}
-	ev := Event{Name: m.Event, Data: m.Data, Reason: m.Reason}
+	ev := Event{Name: m.Event, Data: m.Data, Reason: m.Reason, EntryID: m.EntryID}
 	if m.Event == "property-change" {
 		ev.Property = m.Name
 	}
@@ -248,30 +253,34 @@ func (c *Client) Close() error {
 	return c.closeError
 }
 
-// SocketPath returns the IPC socket path ("" for clients not made by Start).
-func SocketPath() string {
+// SocketPath returns the IPC socket path of the mpv process called name (ytplay
+// runs one mpv per deck, so each needs its own).
+func SocketPath(name string) string {
 	dir := os.Getenv("XDG_RUNTIME_DIR")
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	return filepath.Join(dir, fmt.Sprintf("ytplay-%d.sock", os.Getpid()))
+	return filepath.Join(dir, fmt.Sprintf("ytplay-%d-%s.sock", os.Getpid(), name))
 }
 
-// Start launches mpv in idle mode and connects to its IPC socket.
-func Start(ctx context.Context, ytdlpPath string) (*Client, error) {
+// Start launches mpv in idle mode and connects to its IPC socket. name keeps
+// the sockets of several mpv processes apart; extra mpv arguments (for
+// example --ao=null in tests) are appended.
+func Start(ctx context.Context, ytdlpPath, name string, extra ...string) (*Client, error) {
 	mpvPath, err := exec.LookPath("mpv")
 	if err != nil {
 		return nil, fmt.Errorf("find mpv: %w", err)
 	}
-	sock := SocketPath()
+	sock := SocketPath(name)
 	_ = os.Remove(sock) // stale file from a previous run with the same pid
 
-	cmd := exec.Command(mpvPath,
+	args := []string{
 		"--idle=yes", "--no-video", "--no-terminal", "--force-window=no",
 		"--ytdl-format=bestaudio/best",
-		"--script-opts=ytdl_hook-ytdl_path="+ytdlpPath,
-		"--input-ipc-server="+sock,
-	)
+		"--script-opts=ytdl_hook-ytdl_path=" + ytdlpPath,
+		"--input-ipc-server=" + sock,
+	}
+	cmd := exec.Command(mpvPath, append(args, extra...)...)
 	stderr := &tailBuffer{max: 4096}
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
@@ -344,9 +353,10 @@ func (t *tailBuffer) String() string {
 	return string(t.buf)
 }
 
-// ObservedProperties are the properties the app observes. time-pos and
-// percent-pos are deliberately absent: they fire constantly, so the UI polls.
-var ObservedProperties = []string{"pause", "media-title", "playlist", "playlist-pos", "idle-active"}
+// ObservedProperties are the properties the app observes. The player keeps the
+// playlist itself, so only the pause state is needed from mpv. time-pos is
+// deliberately absent: it fires constantly, so the UI polls.
+var ObservedProperties = []string{"pause"}
 
 // ObserveAll registers observers for ObservedProperties (ids 1..n).
 func (c *Client) ObserveAll() error {
