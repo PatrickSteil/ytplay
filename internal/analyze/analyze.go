@@ -4,15 +4,18 @@
 // ones, kept deliberately simple:
 //
 //   - tempo: a log-compressed spectral-flux onset envelope in three frequency
-//     bands, autocorrelated, with a mild preference for 120 BPM and a fix for
-//     the usual half-tempo mistake;
+//     bands, autocorrelated. A tempo is scored by how strongly the envelope
+//     repeats at many multiples of its beat period (up to four bars), with a
+//     mild preference for 120 BPM. When even the best tempo repeats only
+//     weakly (speech, ambient music, free-time playing) none is reported;
 //   - key: a pitch-class (chroma) histogram built from spectral peaks, where
 //     every peak also votes for the notes it could be an overtone of, matched
 //     against the Albrecht & Shanahan major / minor key profiles.
 //
-// Expect it to be right for most pop, rock and electronic music and to be
-// wrong now and then: tempo can come out at half or double speed, and the key
-// can land on a neighbouring key.
+// The whole song should be analysed, not a clip: the more audio, the steadier
+// both estimates. Expect them to be right for most pop, rock and electronic
+// music and to be wrong now and then: tempo can come out at half or double
+// speed, and the key can land on a neighbouring key.
 package analyze
 
 import (
@@ -27,10 +30,11 @@ const minSeconds = 10
 
 // Result is what could be learned from a piece of audio.
 type Result struct {
-	BPM      float64 // beats per minute, 0 if unknown
-	Key      string  // e.g. "F# minor"
-	Camelot  string  // DJ notation of the key, e.g. "11A"
-	KeyScore float64 // how well the best key matched, 0..1
+	BPM        float64 // beats per minute, 0 if there is no steady beat
+	TempoScore float64 // how regularly the audio repeats at that tempo, 0..1
+	Key        string  // e.g. "F# minor"
+	Camelot    string  // DJ notation of the key, e.g. "11A"
+	KeyScore   float64 // how well the best key matched, 0..1
 }
 
 // Analyze estimates tempo and key of mono PCM at SampleRate.
@@ -45,12 +49,12 @@ func Analyze(pcm []float32) (Result, error) {
 	if math.Sqrt(energy/float64(len(pcm))) < 1e-4 {
 		return Result{}, errors.New("audio is silent")
 	}
-	x := make([]float64, len(pcm))
-	for i, v := range pcm {
-		x[i] = float64(v)
+	var res Result
+	res.BPM, res.TempoScore = tempo(pcm)
+	if res.TempoScore < minTempoScore {
+		res.BPM = 0 // no steady beat: better to say nothing than something wrong
 	}
-	res := Result{BPM: tempo(x)}
-	res.Key, res.KeyScore = detectKey(x)
+	res.Key, res.KeyScore = detectKey(pcm)
 	if res.Key != "" {
 		res.Camelot = camelot(res.Key)
 	}
@@ -119,63 +123,86 @@ func hann(n int) []float64 {
 	return w
 }
 
-// spectrogram returns the magnitudes (bins 0..n/2) of consecutive windows.
-func spectrogram(x []float64, n, hop int) [][]float64 {
+// eachFrame calls fn with the magnitudes (bins 0..n/2) of consecutive windows
+// of x, in order. The slice is reused between calls: copy it to keep it.
+// Frames are handed over one at a time because a whole song's spectrogram
+// would take hundreds of megabytes.
+func eachFrame(x []float32, n, hop int, fn func(t int, mag []float64)) {
 	plan, win := newFFT(n), hann(n)
 	frames := (len(x) - n) / hop
-	out := make([][]float64, 0, max(frames, 0))
 	re, im := make([]float64, n), make([]float64, n)
+	mag := make([]float64, n/2+1)
 	for t := 0; t < frames; t++ {
 		seg := x[t*hop : t*hop+n]
 		for i := range re {
-			re[i], im[i] = seg[i]*win[i], 0
+			re[i], im[i] = float64(seg[i])*win[i], 0
 		}
 		plan.transform(re, im)
-		mag := make([]float64, n/2+1)
 		for k := range mag {
 			mag[k] = math.Hypot(re[k], im[k])
 		}
-		out = append(out, mag)
+		fn(t, mag)
 	}
-	return out
 }
 
 // ---- tempo ----
 
 const (
-	tempoWin    = 1024
-	tempoHop    = 256
-	minBPM      = 60.0
-	maxBPM      = 200.0
-	bpmCenter   = 120.0
-	bpmSigma    = 1.5 // width of the preference for the center, in octaves
-	doubleAbove = 0.6 // see tempo
+	tempoWin  = 1024
+	tempoHop  = 256
+	minBPM    = 60.0
+	maxBPM    = 200.0
+	bpmCenter = 120.0
+	bpmSigma  = 1.5 // width of the preference for the center, in octaves
+
+	combMultiples = 16   // multiples of the beat period that are checked
+	combMinTerms  = 4    // with fewer usable multiples a tempo is not scored
+	maxLagSeconds = 20.0 // longest lag of the autocorrelation
+
+	// minTempoScore separates songs from everything else. On the evaluation
+	// corpus the weakest song scores 0.12 and the strongest non-song (speech,
+	// rain, ambient, rubato piano) 0.02.
+	minTempoScore = 0.06
 )
 
 // onsetEnvelope is the per-frame "something starts now" strength.
-func onsetEnvelope(x []float64) []float64 {
-	spec := spectrogram(x, tempoWin, tempoHop)
-	if len(spec) < 2 {
+func onsetEnvelope(x []float32) []float64 {
+	bands := [...][2]float64{{30, 200}, {200, 2000}, {2000, 8000}}
+	binHz := float64(SampleRate) / tempoWin
+	var bins [len(bands)][]int
+	for b, band := range bands {
+		for k := 0; k <= tempoWin/2; k++ {
+			if f := float64(k) * binHz; f >= band[0] && f < band[1] {
+				bins[b] = append(bins[b], k)
+			}
+		}
+	}
+	// flux[b][t] is how much the energy of band b grew from frame t to t+1.
+	var flux [len(bands)][]float64
+	prev := make([]float64, tempoWin/2+1)
+	cur := make([]float64, tempoWin/2+1)
+	eachFrame(x, tempoWin, tempoHop, func(t int, mag []float64) {
+		for k, m := range mag {
+			cur[k] = math.Log1p(100 * m)
+		}
+		if t > 0 {
+			for b := range bands {
+				var f float64
+				for _, k := range bins[b] {
+					if d := cur[k] - prev[k]; d > 0 {
+						f += d
+					}
+				}
+				flux[b] = append(flux[b], f)
+			}
+		}
+		prev, cur = cur, prev
+	})
+	if len(flux[0]) < 1 {
 		return nil
 	}
-	binHz := float64(SampleRate) / tempoWin
-	env := make([]float64, len(spec)-1)
-	for _, band := range [][2]float64{{30, 200}, {200, 2000}, {2000, 8000}} {
-		var bins []int
-		for k := range spec[0] {
-			if f := float64(k) * binHz; f >= band[0] && f < band[1] {
-				bins = append(bins, k)
-			}
-		}
-		flux := make([]float64, len(env))
-		for t := range flux {
-			for _, k := range bins {
-				d := math.Log1p(100*spec[t+1][k]) - math.Log1p(100*spec[t][k])
-				if d > 0 {
-					flux[t] += d
-				}
-			}
-		}
+	env := make([]float64, len(flux[0]))
+	for _, flux := range flux {
 		// Remove the local mean (21-frame window, zero padded), keep positives.
 		prefix := make([]float64, len(flux)+1)
 		for i, v := range flux {
@@ -199,63 +226,84 @@ func onsetEnvelope(x []float64) []float64 {
 	return env
 }
 
-// tempo estimates the BPM from the autocorrelation of the onset envelope.
-func tempo(x []float64) float64 {
-	env := onsetEnvelope(x)
-	if len(env) < 100 {
-		return 0
-	}
+// autocorrelation returns r[0..maxLag] of the mean-removed signal. Every lag
+// is averaged over the samples that have a partner, so long lags are not
+// penalised, and r is scaled so that r[0] is 1. It is nil for a flat signal.
+func autocorrelation(x []float64, maxLag int) []float64 {
+	n := len(x)
 	var mean float64
-	for _, v := range env {
+	for _, v := range x {
 		mean += v
 	}
-	mean /= float64(len(env))
-	for i := range env {
-		env[i] -= mean
+	mean /= float64(n)
+	e := make([]float64, n)
+	for i, v := range x {
+		e[i] = v - mean
+	}
+	r := make([]float64, maxLag+1)
+	for lag := range r {
+		var s float64
+		for i := 0; i+lag < n; i++ {
+			s += e[i] * e[i+lag]
+		}
+		r[lag] = s / float64(n-lag)
+	}
+	if r[0] <= 0 {
+		return nil
+	}
+	for i := len(r) - 1; i >= 0; i-- {
+		r[i] /= r[0]
+	}
+	return r
+}
+
+// tempo estimates the BPM from the autocorrelation of the onset envelope and
+// says how regularly the audio repeats at that tempo (0..1).
+//
+// A tempo b is scored by the mean autocorrelation at the first
+// combMultiples multiples of its beat period. Looking this far, up to the
+// length of several bars, is what tells the beat from a rhythm that merely
+// repeats a lot, such as a dotted pattern 1.5 beats long: that one lines up
+// with the bars only every third bar, while the beat lines up with every one.
+func tempo(x []float32) (bpm, score float64) {
+	env := onsetEnvelope(x)
+	if len(env) < 100 {
+		return 0, 0
 	}
 	fps := float64(SampleRate) / tempoHop
-	maxLag := min(int(4*fps)+3, len(env)-1)
-	ac := make([]float64, maxLag+1)
-	for lag := range ac {
-		var s float64
-		for i := 0; i+lag < len(env); i++ {
-			s += env[i] * env[i+lag]
-		}
-		ac[lag] = s
-	}
-	if ac[0] <= 0 {
-		return 0
-	}
-	for i := len(ac) - 1; i >= 0; i-- {
-		ac[i] /= ac[0]
+	// Never use lags beyond half the audio: they would rest on too little overlap.
+	maxLag := min(int(maxLagSeconds*fps), (len(env)-1)/2)
+	ac := autocorrelation(env, maxLag)
+	if ac == nil {
+		return 0, 0
 	}
 
-	// How strongly the envelope repeats with the period of b BPM: the lag
-	// itself plus its multiples, which all line up for the true tempo.
-	periodicity := func(b float64) float64 {
+	comb := func(b float64) float64 {
 		var s float64
-		for _, h := range [...]struct{ mult, weight float64 }{{1, 1}, {2, .5}, {4, .25}} {
-			l := fps * 60 / b * h.mult
+		var n int
+		for k := 1; k <= combMultiples; k++ {
+			l := fps * 60 / b * float64(k)
 			i := int(l)
-			if i+1 < len(ac) {
-				s += h.weight * (ac[i]*(1-(l-float64(i))) + ac[i+1]*(l-float64(i)))
+			if i+1 > maxLag {
+				break
 			}
+			s += ac[i]*(1-(l-float64(i))) + ac[i+1]*(l-float64(i))
+			n++
 		}
-		return s
+		if n < combMinTerms {
+			return 0
+		}
+		return s / float64(n)
 	}
-	best, bestScore := 0.0, math.Inf(-1)
+	best, bestWeighted, bestScore := 0.0, 0.0, 0.0
 	for b := minBPM; b < maxBPM; b += 0.25 {
+		s := comb(b)
 		d := math.Log2(b/bpmCenter) / bpmSigma
-		if s := periodicity(b) * math.Exp(-0.5*d*d); s > bestScore {
-			best, bestScore = b, s
+		if w := s * math.Exp(-0.5*d*d); w > bestWeighted {
+			best, bestWeighted, bestScore = b, w, s
 		}
 	}
-	// A half-tempo reading is the classic mistake: if the double tempo repeats
-	// almost as strongly, report the double.
-	if 2*best <= 190 && periodicity(2*best) >= doubleAbove*periodicity(best) {
-		best *= 2
-	}
-	return best
+	return best, bestScore
 }
 
 // ---- key ----
@@ -278,8 +326,7 @@ const (
 )
 
 // chroma sums, over all frames, the energy per pitch class.
-func chroma(x []float64) [12]float64 {
-	spec := spectrogram(x, keyWin, keyHop)
+func chroma(x []float32) [12]float64 {
 	binHz := float64(SampleRate) / keyWin
 	lo, hi := int(math.Ceil(keyMinHz/binHz)), int(keyMaxHz/binHz)
 
@@ -289,7 +336,9 @@ func chroma(x []float64) [12]float64 {
 		amp   float64
 	}
 	var peaks []peak
-	for t, mag := range spec {
+	nFrames := 0
+	eachFrame(x, keyWin, keyHop, func(t int, mag []float64) {
+		nFrames = t + 1
 		var top float64
 		for k := lo; k <= hi; k++ {
 			top = math.Max(top, mag[k])
@@ -303,7 +352,7 @@ func chroma(x []float64) [12]float64 {
 			freq := (float64(k) + d) * binHz
 			peaks = append(peaks, peak{t, 12*math.Log2(freq/440) + 69, math.Sqrt(b)})
 		}
-	}
+	})
 	if len(peaks) == 0 {
 		return [12]float64{}
 	}
@@ -316,7 +365,7 @@ func chroma(x []float64) [12]float64 {
 	}
 	shift := math.Atan2(sy, sx) / (2 * math.Pi)
 
-	frames := make([][12]float64, len(spec))
+	frames := make([][12]float64, nFrames)
 	for _, p := range peaks {
 		w := p.amp
 		for h := 1; h <= keyHarmonic; h++ {
@@ -362,7 +411,7 @@ func pearson(a, b [12]float64) float64 {
 }
 
 // detectKey returns the best matching key and its correlation (0 when none).
-func detectKey(x []float64) (string, float64) {
+func detectKey(x []float32) (string, float64) {
 	c := chroma(x)
 	best, bestKey := 0.0, ""
 	for tonic := 0; tonic < 12; tonic++ {

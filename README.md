@@ -36,7 +36,8 @@ From a checkout: `make` builds, `make test` tests, `make install` installs to
 
 Terminals 108+ columns wide show three equal columns (now playing, queue, search);
 narrower ones get a stacked layout. Under the current song ytplay shows description, views/likes, top comments and an
-estimated BPM and key (worked out from a minute of audio; expect the occasional
+estimated BPM and key (worked out from the whole song; no BPM is shown for audio
+without a steady beat, such as speech or ambient music; expect the occasional
 half/double tempo or neighbouring key). While running, ytplay shows up in the
 desktop media controls (MPRIS).
 
