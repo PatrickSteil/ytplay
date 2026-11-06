@@ -140,7 +140,7 @@ func (m Model) nowPlayingText() []string {
 		return []string{dim.Render("Nothing playing — press / to search")}
 	}
 	title, channel, _ := m.entryInfo(*e)
-	return []string{bold.Render(title), dim.Render(channel), m.progressLine()}
+	return []string{bold.Render(safe(title)), dim.Render(safe(channel)), m.progressLine()}
 }
 
 // textWidth is the width available next to the cover.
@@ -220,7 +220,7 @@ func (m Model) queueRows(w int) []string {
 	titleW := max(w-5-durW-1, 1)
 	rowFor := func(e playlistEntry) string {
 		title, _, dur := m.entryInfo(e)
-		return fit(title, titleW) + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
+		return fit(safe(title), titleW) + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
 	}
 	lines := []string{accentB.Render("  ▶  ") + accent.Render(rowFor(*cur))}
 
@@ -265,16 +265,17 @@ func (m Model) statusLine() string {
 		style = errStyle
 	}
 	help := m.help()
+	status := safe(m.status) // may quote a song title
 	helpW := lipgloss.Width(help)
 	if m.width >= helpW+14 {
 		left := m.width - helpW - 2
-		if m.status == "" {
+		if status == "" {
 			return fit("", left) + "  " + dim.Render(help)
 		}
-		return style.Render(fit(m.status, left)) + "  " + dim.Render(help)
+		return style.Render(fit(status, left)) + "  " + dim.Render(help)
 	}
-	if m.status != "" {
-		return style.Render(clip(m.status, m.width))
+	if status != "" {
+		return style.Render(clip(status, m.width))
 	}
 	return dim.Render(clip(help, m.width))
 }
@@ -289,7 +290,7 @@ func (m Model) resultsVisible() int {
 }
 
 func (m Model) resultsHeader(w int) string {
-	return bold.Render(clip(fmt.Sprintf("Results for %q", m.query), w))
+	return bold.Render(clip(fmt.Sprintf("Results for %q", safe(m.query)), w))
 }
 
 func (m Model) renderResults(vis int) []string {
@@ -314,9 +315,9 @@ func (m Model) resultRow(w, i int, r yt.Result, focused bool) string {
 		titleW -= chanW + 2
 	}
 	dur := fmt.Sprintf("%*s", durW, formatDur(r.Duration))
-	row := fit(r.Title, max(titleW, 1)) + " " + dur
+	row := fit(safe(r.Title), max(titleW, 1)) + " " + dur
 	if chanW > 0 {
-		row += "  " + fit(r.Channel, chanW)
+		row += "  " + fit(safe(r.Channel), chanW)
 	}
 	switch {
 	case i == m.selected && focused:
@@ -518,7 +519,7 @@ func wrapText(text string, w, maxLines int) []string {
 	if w <= 0 || maxLines <= 0 {
 		return nil
 	}
-	text = ansi.Strip(text)
+	text = dropUnsafe(ansi.Strip(text))
 	var lines []string
 	for _, raw := range strings.Split(text, "\n") {
 		words := strings.FieldsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
@@ -703,4 +704,75 @@ func (m Model) withPopup(view string) string {
 	left := max((m.width-lipgloss.Width(box[0]))/2, 0)
 	top := max((m.height-len(box))/2, 0)
 	return strings.Join(overlay(strings.Split(view, "\n"), box, m.width, left, top), "\n")
+}
+
+// ---- text from YouTube ----
+
+// Terminals disagree with each other, and with width tables, about how many
+// cells emoji take (especially joined ones such as family or flag sequences).
+// A single wrong guess shifts the rest of the line and breaks the frames. So
+// emoji and invisible joiners are not drawn in titles, channels, descriptions
+// and comments; they are removed. The UI's own symbols are not affected,
+// because only text from outside goes through here.
+
+// unsafeRanges are the code point ranges removed from external text.
+var unsafeRanges = [][2]rune{
+	{0x200B, 0x200F},   // zero width space / joiner marks, directional marks
+	{0x202A, 0x202E},   // bidi embeddings and overrides
+	{0x2060, 0x2064},   // word joiner and invisible operators
+	{0x2066, 0x2069},   // bidi isolates
+	{0xFEFF, 0xFEFF},   // byte order mark
+	{0xFE00, 0xFE0F},   // variation selectors
+	{0x20E3, 0x20E3},   // combining keycap
+	{0xE0000, 0xE007F}, // tag characters (used in flag sequences)
+	{0x2194, 0x2199},   // emoji arrows
+	{0x21A9, 0x21AA},
+	{0x231A, 0x231B}, // watch, hourglass
+	{0x2328, 0x2328},
+	{0x23CF, 0x23CF},
+	{0x23E9, 0x23F3},
+	{0x23F8, 0x23FA},
+	{0x24C2, 0x24C2},
+	{0x25AA, 0x25AB},
+	{0x25B6, 0x25B6},
+	{0x25C0, 0x25C0},
+	{0x25FB, 0x25FE},
+	{0x2600, 0x27BF}, // miscellaneous symbols and dingbats (hearts, stars, sparkles ...)
+	{0x2934, 0x2935},
+	{0x2B05, 0x2B07},
+	{0x2B1B, 0x2B1C},
+	{0x2B50, 0x2B50},
+	{0x2B55, 0x2B55},
+	{0x3030, 0x3030},
+	{0x303D, 0x303D},
+	{0x3297, 0x3299},
+	{0x1F000, 0x1FAFF}, // mahjong, cards, flags, pictographs, emoticons, skin tones ...
+}
+
+func isUnsafe(r rune) bool {
+	for _, rg := range unsafeRanges {
+		if r >= rg[0] && r <= rg[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// dropUnsafe removes emoji and invisible joiners but keeps all spacing.
+func dropUnsafe(s string) string {
+	if !strings.ContainsFunc(s, isUnsafe) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if isUnsafe(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// safe makes a single line of external text safe to draw: emoji removed and
+// the gaps they leave closed.
+func safe(s string) string {
+	return strings.Join(strings.Fields(dropUnsafe(s)), " ")
 }
