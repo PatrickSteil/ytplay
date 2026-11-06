@@ -3,6 +3,7 @@ package ui
 import (
 	"time"
 
+	"github.com/PatrickSteil/ytplay/internal/analyze"
 	"github.com/PatrickSteil/ytplay/internal/mpv"
 	"github.com/PatrickSteil/ytplay/internal/yt"
 )
@@ -61,3 +62,21 @@ type radioDoneMsg struct {
 	results []yt.Result
 	err     error
 }
+
+// infoMsg is the result of fetching description, stats and comments.
+type infoMsg struct {
+	id   string
+	info yt.Info
+	err  error
+}
+
+// analysisMsg is the result of analysing a song's tempo and key.
+type analysisMsg struct {
+	id  string
+	res analyze.Result
+	err error
+}
+
+// statsDelay is how long a track must keep playing before its stats are
+// looked up, so skipping through songs does not start a lookup for each one.
+const statsDelay = 1200 * time.Millisecond

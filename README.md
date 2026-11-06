@@ -29,7 +29,9 @@ ytplay
 | `Q`, Ctrl+C | quit |
 
 Terminals 100+ columns wide show three columns (now playing, queue, search);
-narrower ones get a stacked layout. While running, ytplay shows up in the
+narrower ones get a stacked layout. Under the current song ytplay shows description, views/likes, top comments and an
+estimated BPM and key (worked out from a minute of audio; expect the occasional
+half/double tempo or neighbouring key). While running, ytplay shows up in the
 desktop media controls (MPRIS).
 
 MIT licensed.

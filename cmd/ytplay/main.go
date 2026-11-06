@@ -20,6 +20,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/PatrickSteil/ytplay/internal/analyze"
 	"github.com/PatrickSteil/ytplay/internal/cover"
 	"github.com/PatrickSteil/ytplay/internal/mpris"
 	"github.com/PatrickSteil/ytplay/internal/mpv"
@@ -39,7 +40,8 @@ func run() int {
 	flag.Parse()
 
 	// Startup checks happen before the TUI starts.
-	if _, err := exec.LookPath("mpv"); err != nil {
+	mpvPath, err := exec.LookPath("mpv")
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "ytplay: mpv not found. install mpv: sudo apt install mpv / brew install mpv")
 		return 1
 	}
@@ -53,7 +55,7 @@ func run() int {
 		ytdlp = abs
 	}
 
-	return runTUI(ytdlp)
+	return runTUI(ytdlp, mpvPath)
 }
 
 func setupLogging() func() {
@@ -69,7 +71,7 @@ func setupLogging() func() {
 	return func() { f.Close() }
 }
 
-func runTUI(ytdlp string) int {
+func runTUI(ytdlp, mpvPath string) int {
 	defer setupLogging()()
 
 	if ct := os.Getenv("COLORTERM"); ct != "truecolor" && ct != "24bit" {
@@ -103,6 +105,12 @@ func runTUI(ytdlp string) int {
 		Cover:   covers.Get,
 		Search: func(ctx context.Context, q string) ([]yt.Result, error) {
 			return yt.Search(ctx, ytdlp, q, 15)
+		},
+		Info: func(ctx context.Context, id string) (yt.Info, error) {
+			return yt.FetchInfo(ctx, ytdlp, id, 5)
+		},
+		Analyze: func(ctx context.Context, id string, duration float64) (analyze.Result, error) {
+			return analyze.Song(ctx, mpvPath, ytdlp, id, duration)
 		},
 		Similar: func(ctx context.Context, seeds []string, exclude map[string]bool, n int) ([]yt.Result, error) {
 			return yt.Similar(ctx, ytdlp, seeds, exclude, n)

@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/PatrickSteil/ytplay/internal/analyze"
 	"github.com/PatrickSteil/ytplay/internal/mpv"
 	"github.com/PatrickSteil/ytplay/internal/yt"
 )
@@ -51,6 +52,11 @@ type Deps struct {
 	// Publish is told what is playing whenever it changes (for MPRIS). It is
 	// called from Update, so it must return quickly and never block.
 	Publish func(NowPlaying)
+	// Info fetches description, stats and top comments of a video (nil: none).
+	Info func(ctx context.Context, id string) (yt.Info, error)
+	// Analyze estimates tempo and key of a video of the given length in
+	// seconds (0 if unknown) (nil: none).
+	Analyze func(ctx context.Context, id string, duration float64) (analyze.Result, error)
 	// Cover returns the rendered cover for a video ID (nil: no covers).
 	Cover func(ctx context.Context, id string) (string, error)
 }
@@ -65,6 +71,14 @@ type NowPlaying struct {
 	Duration float64
 	Paused   bool
 	HasNext  bool
+}
+
+// trackStats is what is known about one track beyond its search result.
+type trackStats struct {
+	info                   yt.Info
+	hasInfo, infoFailed    bool
+	res                    analyze.Result
+	hasRes, analysisFailed bool
 }
 
 // playlistEntry is one element of mpv's observed "playlist" property.
@@ -96,7 +110,12 @@ type Model struct {
 	loading        bool
 	elapsed, total float64           // seconds, from the 500 ms poll
 	covers         map[string]string // rendered cover by video ID
-	coverAsked     map[string]bool   // IDs already requested (success or failure): never retried
+	stats          map[string]trackStats
+	infoAsked      map[string]bool // lookups already started: never repeated unless cancelled
+	analysisAsked  map[string]bool
+	statsCancel    context.CancelFunc // cancels the lookups of the previous track
+	statsDelay     time.Duration
+	coverAsked     map[string]bool // IDs already requested (success or failure): never retried
 
 	// Queue editing. queueCursor indexes the entries after the current one.
 	queueCursor int
@@ -130,6 +149,8 @@ func New(d Deps) Model {
 		deps: d, input: ti, width: 80, height: 24,
 		tracks: map[string]yt.Result{}, pos: -1, idle: true,
 		covers: map[string]string{}, coverAsked: map[string]bool{},
+		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{},
+		statsDelay: statsDelay,
 	}
 }
 
@@ -227,6 +248,34 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case radioDoneMsg:
 		return m.handleRadioDone(msg)
 
+	case infoMsg:
+		if errors.Is(msg.err, context.Canceled) {
+			delete(m.infoAsked, msg.id) // interrupted: try again next time
+			return m, nil
+		}
+		st := m.stats[msg.id]
+		if msg.err != nil {
+			st.infoFailed = true
+		} else {
+			st.info, st.hasInfo = msg.info, true
+		}
+		m.stats[msg.id] = st
+		return m, nil
+
+	case analysisMsg:
+		if errors.Is(msg.err, context.Canceled) {
+			delete(m.analysisAsked, msg.id)
+			return m, nil
+		}
+		st := m.stats[msg.id]
+		if msg.err != nil {
+			st.analysisFailed = true
+		} else {
+			st.res, st.hasRes = msg.res, true
+		}
+		m.stats[msg.id] = st
+		return m, nil
+
 	case coverMsg:
 		if msg.err == nil && msg.rendered != "" {
 			m.covers[msg.id] = msg.rendered
@@ -296,9 +345,68 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 	if cur := m.currentID(); cur != prev {
 		m.elapsed, m.total = 0, 0
 		m.loading = cur != ""
-		return m, m.fetchCover(cur)
+		return m, tea.Batch(m.fetchCover(cur), m.fetchStats(cur))
 	}
 	return m, nil
+}
+
+// fetchStats starts the description and tempo/key lookups for the current
+// track (after a short delay) and cancels those of the previous one.
+func (m *Model) fetchStats(id string) tea.Cmd {
+	if m.statsCancel != nil {
+		m.statsCancel()
+		m.statsCancel = nil
+	}
+	wantInfo := id != "" && m.deps.Info != nil && !m.infoAsked[id]
+	wantAnalysis := id != "" && m.deps.Analyze != nil && !m.analysisAsked[id]
+	if !wantInfo && !wantAnalysis {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.statsCancel = cancel
+	delay := m.statsDelay
+	// wait returns false if the track changed before the delay was over.
+	wait := func() bool {
+		if delay <= 0 {
+			return ctx.Err() == nil
+		}
+		select {
+		case <-time.After(delay):
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	var cmds []tea.Cmd
+	if wantInfo {
+		m.infoAsked[id] = true
+		fetch := m.deps.Info
+		cmds = append(cmds, func() tea.Msg {
+			if !wait() {
+				return infoMsg{id: id, err: context.Canceled}
+			}
+			info, err := fetch(ctx, id)
+			if ctx.Err() != nil {
+				err = context.Canceled
+			}
+			return infoMsg{id: id, info: info, err: err}
+		})
+	}
+	if wantAnalysis {
+		m.analysisAsked[id] = true
+		analyse, duration := m.deps.Analyze, m.tracks[id].Duration
+		cmds = append(cmds, func() tea.Msg {
+			if !wait() {
+				return analysisMsg{id: id, err: context.Canceled}
+			}
+			res, err := analyse(ctx, id, duration)
+			if ctx.Err() != nil {
+				err = context.Canceled
+			}
+			return analysisMsg{id: id, res: res, err: err}
+		})
+	}
+	return tea.Batch(cmds...)
 }
 
 // fetchCover starts a download for id unless one was already requested.
@@ -380,6 +488,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) quit() tea.Cmd {
 	if m.searchCancel != nil {
 		m.searchCancel()
+	}
+	if m.statsCancel != nil {
+		m.statsCancel() // stops yt-dlp / mpv helpers started for the stats
 	}
 	return tea.Quit
 }

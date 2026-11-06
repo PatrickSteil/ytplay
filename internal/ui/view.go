@@ -2,7 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -98,6 +100,13 @@ func (m Model) rule() string { return dim.Render(strings.Repeat("─", max(m.wid
 // renderTop is the now-playing panel.
 func (m Model) renderTop() []string {
 	text := m.nowPlayingText()
+	if m.currentID() != "" { // too little room here for description and comments
+		for _, l := range []string{m.bpmKeyLine(), m.statsLine()} {
+			if l != "" {
+				text = append(text, l)
+			}
+		}
+	}
 	if !m.showCover() {
 		for len(text) < 3 {
 			text = append(text, "")
@@ -414,16 +423,16 @@ func box(title string, body []string, innerW, innerH int, focused bool) []string
 
 // leftBody is the now-playing column: cover on top, track info below.
 func (m Model) leftBody(innerH int) []string {
-	text := m.nowPlayingText()
-	if innerH < coverColHeight {
-		return text
+	body := m.nowPlayingText()
+	if innerH >= coverColHeight {
+		body = append(strings.Split(m.coverFor(), "\n"), append([]string{""}, body...)...)
 	}
-	var body []string
-	for _, l := range strings.Split(m.coverFor(), "\n") {
-		body = append(body, l)
+	if room := innerH - len(body) - 1; room >= 2 {
+		if stats := m.statsLines(m.textWidth(), room); len(stats) > 0 {
+			body = append(append(body, ""), stats...)
+		}
 	}
-	body = append(body, "")
-	return append(body, text...)
+	return body
 }
 
 func (m Model) searchBody(w, innerH int) []string {
@@ -467,4 +476,165 @@ func (m Model) viewWide() string {
 		lines[i] = clip(l, m.width)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ---- extra information about the current song ----
+
+// compact abbreviates a count: 8700 -> "8.7K", 1234567 -> "1.2M".
+func compact(n int) string {
+	if n < 1000 {
+		return strconv.Itoa(n)
+	}
+	v, suffix := float64(n), ""
+	for _, s := range []string{"K", "M", "B"} {
+		v /= 1000
+		suffix = s
+		if v < 999.5 {
+			break
+		}
+	}
+	if v < 10 {
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", v), ".0") + suffix
+	}
+	return fmt.Sprintf("%.0f", v) + suffix
+}
+
+// wrapText word-wraps text to w display columns, dropping blank lines and
+// control characters, and cuts it to maxLines (ending in "…" if it was cut).
+func wrapText(text string, w, maxLines int) []string {
+	if w <= 0 || maxLines <= 0 {
+		return nil
+	}
+	text = ansi.Strip(text)
+	var lines []string
+	for _, raw := range strings.Split(text, "\n") {
+		words := strings.FieldsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
+		cur := ""
+		flush := func() {
+			if cur != "" {
+				lines = append(lines, cur)
+				cur = ""
+			}
+		}
+		for _, word := range words {
+			for lipgloss.Width(word) > w { // a word longer than a line: break it
+				flush()
+				chunk := ansi.Truncate(word, w, "")
+				lines = append(lines, chunk)
+				word = word[len(chunk):]
+			}
+			switch {
+			case word == "":
+			case cur == "":
+				cur = word
+			case lipgloss.Width(cur)+1+lipgloss.Width(word) <= w:
+				cur += " " + word
+			default:
+				flush()
+				cur = word
+			}
+		}
+		flush()
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines[maxLines-1] = ansi.Truncate(lines[maxLines-1]+"…", w, "…")
+	}
+	return lines
+}
+
+// bpmKeyLine is "116 BPM · F# minor · 11A", a placeholder while the audio is
+// being analysed, or "" if there is nothing (to show).
+func (m Model) bpmKeyLine() string {
+	id := m.currentID()
+	st := m.stats[id]
+	switch {
+	case id == "" || m.deps.Analyze == nil || st.analysisFailed:
+		return ""
+	case !st.hasRes:
+		return dim.Render("analysing…")
+	}
+	var parts []string
+	if st.res.BPM > 0 {
+		parts = append(parts, fmt.Sprintf("%.0f BPM", st.res.BPM))
+	}
+	if st.res.Key != "" {
+		parts = append(parts, st.res.Key)
+		if st.res.Camelot != "" {
+			parts = append(parts, st.res.Camelot)
+		}
+	}
+	return accent.Render(strings.Join(parts, " · "))
+}
+
+// statsLine is "1.2M views · 8.9K likes · 2013" (empty until known).
+func (m Model) statsLine() string {
+	st := m.stats[m.currentID()]
+	if !st.hasInfo {
+		return ""
+	}
+	var parts []string
+	if st.info.Views > 0 {
+		parts = append(parts, compact(st.info.Views)+" views")
+	}
+	if st.info.Likes > 0 {
+		parts = append(parts, compact(st.info.Likes)+" likes")
+	}
+	if st.info.Year > 0 {
+		parts = append(parts, strconv.Itoa(st.info.Year))
+	}
+	return dim.Render(strings.Join(parts, " · "))
+}
+
+// statsLines fills up to avail lines (w columns wide) with the tempo/key, the
+// numbers, the description and the top comments of the current song, as far
+// as they fit.
+func (m Model) statsLines(w, avail int) []string {
+	if m.currentID() == "" || avail <= 0 {
+		return nil
+	}
+	var out []string
+	for _, l := range []string{m.bpmKeyLine(), m.statsLine()} {
+		if l != "" && len(out) < avail {
+			out = append(out, clip(l, w))
+		}
+	}
+	st := m.stats[m.currentID()]
+	if !st.hasInfo {
+		return out
+	}
+
+	// Description: about half of what is left, at most six lines.
+	if n := min(6, (avail-len(out)-1)/2); n >= 1 {
+		if lines := wrapText(st.info.Description, w, n); len(lines) > 0 {
+			out = append(out, "")
+			for _, l := range lines {
+				out = append(out, dim.Render(l))
+			}
+		}
+	}
+
+	// Comments: a header, then as many (up to three, two lines each) as fit.
+	if room := avail - len(out); len(st.info.Comments) > 0 && room >= 3 {
+		out = append(out, "", bold.Render("Top comments"))
+		for i, c := range st.info.Comments {
+			room = avail - len(out)
+			if i == 3 || room <= 0 {
+				break
+			}
+			prefix := ""
+			if c.Likes > 0 {
+				prefix = "♥" + compact(c.Likes) + " "
+			}
+			lines := wrapText(prefix+c.Text, w, min(2, room))
+			for j, l := range lines {
+				if rest, ok := strings.CutPrefix(l, prefix); ok && j == 0 && prefix != "" {
+					out = append(out, accent.Render(prefix)+dim.Render(rest))
+				} else {
+					out = append(out, dim.Render(l))
+				}
+			}
+		}
+	}
+	return out
 }
