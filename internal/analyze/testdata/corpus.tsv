@@ -1,0 +1,27 @@
+# Ground truth for the tempo evaluation (see corpus_test.go).
+#
+# Columns, separated by tabs:  YouTube id | BPM | title | note
+#
+# BPM is the consensus of public databases for the studio recording. Sources
+# disagree by 1-2 BPM for some songs, so the evaluation allows a tolerance. A
+# BPM of 0 means "not music at all": no tempo should be reported.
+#
+# The audio is not part of the repository. Run
+#   YTPLAY_CORPUS=$HOME/.cache/ytplay-corpus go test ./internal/analyze -run TestCorpus -v
+# to download it (with mpv and yt-dlp, like the app does) and score the detector.
+A2VpR8HahKc	123	Daft Punk - One More Time	Mixmeister 122.9 (cs.ubc.ca), musiciwant 123
+Zi_XLOBDo_Y	117	Michael Jackson - Billie Jean	most databases 117, one 118
+rY0WxgSXdEE	110	Queen - Another One Bites the Dust	Mixmeister 109.9, AcousticBrainz 110, getsongbpm 112
+wDuoOapZ9Z0	126	Avicii - Levels (Original Version)	Beatport 126, DJ library 126
+f1IDFqzk1XA	125	Oliver Heldens x Becky Hill - Gecko (Overdrive)	radio edit 125 (klang.io); a user-supplied 120 does not match any source
+JGwWNGJdvx8	96	Ed Sheeran - Shape of You	sfrbeats 96, tunebat 96; klang.io says 97
+gGdGFtwCNBE	148	The Killers - Mr. Brightside	Wikipedia 148, DJ listing 148; range 144-149
+OPf0YbXqDm0	115	Mark Ronson - Uptown Funk	Mixmeister 115.0; several sources 115
+hLQl3WQQoQ0	67	Adele - Someone Like You	Musicnotes 67, others 66; a ballad, double time (about 134) is a likely mistake
+hTWKbfoikeg	117	Nirvana - Smells Like Teen Spirit	songbpm 117, Power Trakks 115, karaoke 118
+# Not songs, or no steady beat: the right answer is "no tempo" (BPM 0).
+qp0HIF3SfI4	0	TED - Simon Sinek, How Great Leaders Inspire Action	speech
+wb32c3OnVn0	0	Pride and Prejudice, chapter 1 (audiobook)	speech
+axSlHNHtFWc	0	Rubinstein - Chopin Nocturne Op. 9 No. 2	rubato piano, music without a steady beat
+LKZ3fGR2SDY	0	Brian Eno - 1/1	ambient, no beat
+eTeD8DAta4c	0	Relaxing rain sounds	noise
