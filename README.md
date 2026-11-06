@@ -13,6 +13,9 @@ go install github.com/PatrickSteil/ytplay/cmd/ytplay@latest
 ytplay
 ```
 
+From a checkout: `make` builds, `make test` tests, `make install` installs to
+`~/.local/bin` (`PREFIX=/usr/local` for system-wide; `make help` lists all).
+
 ## Keys
 
 | Key | Action |
@@ -29,7 +32,7 @@ ytplay
 | Space | pause / resume |
 | `Q`, Ctrl+C | quit |
 
-Terminals 100+ columns wide show three columns (now playing, queue, search);
+Terminals 108+ columns wide show three equal columns (now playing, queue, search);
 narrower ones get a stacked layout. Under the current song ytplay shows description, views/likes, top comments and an
 estimated BPM and key (worked out from a minute of audio; expect the occasional
 half/double tempo or neighbouring key). While running, ytplay shows up in the
