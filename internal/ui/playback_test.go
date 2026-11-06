@@ -36,6 +36,7 @@ func (f *fakeActions) TogglePause(ctx context.Context) error { return f.rec("pau
 func (f *fakeActions) QueueMany(ctx context.Context, urls []string) error {
 	return f.rec("queuemany " + strings.Join(urls, ","))
 }
+func (f *fakeActions) ClearQueue(ctx context.Context) error { return f.rec("clear") }
 func (f *fakeActions) Remove(ctx context.Context, i int) error {
 	return f.rec(fmt.Sprintf("remove %d", i))
 }

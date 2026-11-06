@@ -244,3 +244,11 @@ func TestQueueManyWithNothingDoesNothing(t *testing.T) {
 	}
 	check(t, r)
 }
+
+func TestClearQueue(t *testing.T) {
+	r := &recorder{}
+	if err := New(r).ClearQueue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	check(t, r, "playlist-clear")
+}

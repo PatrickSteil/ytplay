@@ -24,6 +24,7 @@ const (
 	modeSearch              // search bar focused
 	modeResults             // results list focused
 	modeQueue               // queue panel focused (remove / reorder)
+	modeConfirm             // "clear the queue?" popup
 )
 
 // Actions is what the UI needs from the player (implemented by
@@ -35,6 +36,7 @@ type Actions interface {
 	SeekPercent(ctx context.Context, n int) error
 	TogglePause(ctx context.Context) error
 	QueueMany(ctx context.Context, urls []string) error
+	ClearQueue(ctx context.Context) error
 	Remove(ctx context.Context, index int) error
 	MoveUp(ctx context.Context, index int) error
 	MoveDown(ctx context.Context, index int) error
@@ -122,6 +124,7 @@ type Model struct {
 	queueOff    int  // first visible queue row
 	queueReturn mode // where Esc / Tab goes back to
 	queueBusy   bool // an edit command is in flight
+	confirmFrom mode // where the clear-queue popup returns to
 	radioBusy   bool // a similar-songs lookup is running
 
 	lastPub NowPlaying // last snapshot handed to Deps.Publish
@@ -469,6 +472,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k == keyCtrlC {
 		return m, m.quit()
 	}
+	if m.mode == modeConfirm {
+		return m.handleConfirmKey(k)
+	}
 	if m.mode == modeSearch {
 		return m.handleSearchKey(msg)
 	}
@@ -620,6 +626,12 @@ func (m Model) handleGlobalKey(k string) (tea.Model, tea.Cmd) {
 		return m, m.input.Focus()
 	case keyRadio:
 		return m.startRadio()
+	case keyClearQueue:
+		if len(m.upcoming()) == 0 {
+			return m, m.setStatus("Queue is empty", false)
+		}
+		m.confirmFrom, m.mode = m.mode, modeConfirm
+		return m, nil
 	case keyQueueFocus:
 		if len(m.upcoming()) == 0 {
 			return m, m.setStatus("Queue is empty", false)
@@ -833,4 +845,30 @@ func (m Model) handleRadioDone(msg radioDoneMsg) (Model, tea.Cmd) {
 		m.action(false, func(ctx context.Context) error { return p.QueueMany(ctx, urls) }),
 		m.setStatus(fmt.Sprintf("Added %d similar songs", len(urls)), false),
 	)
+}
+
+// handleConfirmKey handles the "clear the queue?" popup: only y confirms, n
+// or Esc decline, everything else is ignored.
+func (m Model) handleConfirmKey(k string) (tea.Model, tea.Cmd) {
+	switch k {
+	case keyConfirm:
+		m.mode = m.confirmFrom
+		cur := m.currentEntry()
+		if cur == nil || len(m.upcoming()) == 0 {
+			m.clampQueue() // nothing left to clear (it changed while asking)
+			return m, nil
+		}
+		// mpv keeps the playing entry; show that right away, events confirm it.
+		m.playlist, m.pos = []playlistEntry{*cur}, 0
+		m.clampQueue()
+		p := m.deps.Player
+		return m, tea.Batch(
+			m.action(false, func(ctx context.Context) error { return p.ClearQueue(ctx) }),
+			m.setStatus("Queue cleared", false),
+		)
+	case keyDeny, keyEsc:
+		m.mode = m.confirmFrom
+		m.clampQueue()
+	}
+	return m, nil
 }

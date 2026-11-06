@@ -20,8 +20,8 @@ const (
 	minWidthForCover = 60
 	maxQueueRows     = 5 // current entry + queueWindow upcoming ones
 	queueWindow      = maxQueueRows - 1
-	helpText         = "/ search  ⏎ play  q queue  r similar  ⇥ edit queue  s skip  0-9 = seek  ␣ pause  Q quit"
-	queueHelpText    = "j/k select  ↑/↓ move  x remove  ⇥/esc back"
+	helpText         = "/ search  ⏎ play  q queue  r radio  ⇥ edit  X clear  s skip  0-9 = seek  ␣ pause  Q quit"
+	queueHelpText    = "j/k select  ↑/↓ move  x remove  X clear  ⇥/esc back"
 
 	// From this width on the screen is split into three framed columns.
 	wideMinWidth  = 100
@@ -329,10 +329,16 @@ func (m Model) resultRow(w, i int, r yt.Result, focused bool) string {
 // View draws three framed columns on wide terminals and a stacked layout
 // otherwise.
 func (m Model) View() string {
+	var v string
 	if m.wide() {
-		return m.viewWide()
+		v = m.viewWide()
+	} else {
+		v = m.viewStacked()
 	}
-	return m.viewStacked()
+	if m.mode == modeConfirm {
+		v = m.withPopup(v)
+	}
+	return v
 }
 
 func (m Model) viewStacked() string {
@@ -637,4 +643,55 @@ func (m Model) statsLines(w, avail int) []string {
 		}
 	}
 	return out
+}
+
+// ---- popup ----
+
+// overlay draws box on top of lines, its top-left corner at column left and
+// row top. Styles in the text around the box are preserved. Rows outside the
+// screen are dropped; lines are never added.
+func overlay(lines, box []string, width, left, top int) []string {
+	out := append([]string(nil), lines...)
+	for i, b := range box {
+		row := top + i
+		if row < 0 || row >= len(out) {
+			continue
+		}
+		bw := lipgloss.Width(b)
+		head := ansi.Truncate(out[row], left, "")
+		if pad := left - lipgloss.Width(head); pad > 0 {
+			head += strings.Repeat(" ", pad)
+		}
+		tail := ansi.TruncateLeft(out[row], left+bw, "")
+		out[row] = head + b + tail
+	}
+	return out
+}
+
+// confirmBox is the "clear the queue?" popup.
+func (m Model) confirmBox() []string {
+	n := len(m.upcoming())
+	songs := fmt.Sprintf("%d upcoming songs", n)
+	if n == 1 {
+		songs = "1 upcoming song"
+	}
+	w := max(min(46, m.width)-2, 0) // inner width
+	row := func(s string) string { return accent.Render("│") + fit(" "+s, w) + accent.Render("│") }
+	title := " Clear the queue? "
+	return []string{
+		accent.Render("┌") + bold.Render(clip(title, w)) + accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐"),
+		row(""),
+		row("Remove all " + songs + "?"),
+		row(dim.Render("The playing song keeps going.")),
+		row(""),
+		row(accentB.Render("y yes") + "        " + dim.Render("n/esc no")),
+		accent.Render("└" + strings.Repeat("─", w) + "┘"),
+	}
+}
+
+func (m Model) withPopup(view string) string {
+	box := m.confirmBox()
+	left := max((m.width-lipgloss.Width(box[0]))/2, 0)
+	top := max((m.height-len(box))/2, 0)
+	return strings.Join(overlay(strings.Split(view, "\n"), box, m.width, left, top), "\n")
 }

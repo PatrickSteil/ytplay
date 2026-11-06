@@ -163,3 +163,8 @@ func (p *Player) QueueMany(ctx context.Context, urls []string) error {
 	}
 	return nil
 }
+
+// ClearQueue removes every entry except the one that is playing now.
+func (p *Player) ClearQueue(ctx context.Context) error {
+	return p.do(ctx, "playlist-clear")
+}

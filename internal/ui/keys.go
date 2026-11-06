@@ -17,7 +17,10 @@ const (
 	keyUpAlt   = "up"
 	keySeekEnd = "=" // Shift+0 on a German keyboard
 
-	keyRadio = "r" // add songs similar to the queue
+	keyRadio      = "r" // add songs similar to the queue
+	keyClearQueue = "X" // clear the queue (asks first)
+	keyConfirm    = "y" // confirm in the popup
+	keyDeny       = "n" // decline in the popup (Esc too)
 
 	// Queue editing (modeQueue).
 	keyQueueFocus = "tab"  // focus / leave the queue panel
