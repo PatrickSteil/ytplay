@@ -109,7 +109,7 @@ func playingWithStats(t *testing.T, w, h int) Model {
 func TestStatsAreFetchedWhenTheTrackChanges(t *testing.T) {
 	var f statsFakes
 	m := statsModel(&f)
-	_, cmd := startStats(t, m, "0", "*a", "b")
+	_, cmd := startStats(t, m, "0", "*a") // alone in the queue: nothing else is analysed in the background
 	msgs := collect(cmd)
 	info, an := pick[infoMsg](msgs), pick[analysisMsg](msgs)
 	if info == nil || an == nil || info.id != "a" || an.id != "a" {

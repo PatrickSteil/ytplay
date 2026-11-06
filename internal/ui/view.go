@@ -21,7 +21,7 @@ const (
 	maxQueueRows     = 5 // current entry + queueWindow upcoming ones
 	queueWindow      = maxQueueRows - 1
 	helpText         = "/ search  ⏎ play  q queue  r radio  ⇥ edit  X clear  s skip  0-9 = seek  ␣ pause  Q quit"
-	queueHelpText    = "j/k select  ↑/↓ move  x remove  X clear  ⇥/esc back"
+	queueHelpText    = "j/k select  ↑/↓ move  x remove  b sort by BPM  X clear  ⇥/esc back"
 
 	// From this width on the screen is split into three equally wide framed
 	// columns. A third of it must fit the cover plus frame and padding.
@@ -217,10 +217,15 @@ func (m Model) queueRows(w int) []string {
 	}
 	upcoming := m.upcoming()
 	const durW = 8
-	titleW := max(w-5-durW-1, 1)
+	const bpmW = 4 // a space and up to three digits, blank while unknown
+	titleW := max(w-5-durW-1-bpmW, 1)
 	rowFor := func(e playlistEntry) string {
 		title, _, dur := m.entryInfo(e)
-		return fit(safe(title), titleW) + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
+		bpm := strings.Repeat(" ", bpmW)
+		if st := m.stats[yt.VideoID(e.Filename)]; st.hasRes && st.res.BPM > 0 {
+			bpm = fmt.Sprintf(" %3.0f", st.res.BPM)
+		}
+		return fit(safe(title), titleW) + bpm + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
 	}
 	lines := []string{accentB.Render("  ▶  ") + accent.Render(rowFor(*cur))}
 
@@ -743,6 +748,7 @@ func (m Model) helpBox() []string {
 		key("d", "save a song to a file (Tab completes the path)"),
 		key("r", "add 20 songs similar to the queue"),
 		key("Tab", "edit queue: j/k select, ↑/↓ move, x remove"),
+		key("b", "in the queue: sort by BPM, again reverses"),
 		key("X", "clear the queue (asks first)"),
 		key("s", "skip"),
 		key("Space", "pause / resume"),

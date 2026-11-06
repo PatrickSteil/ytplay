@@ -47,6 +47,10 @@ func (f *fakeActions) MoveDown(ctx context.Context, i int) error {
 	return f.rec(fmt.Sprintf("movedown %d", i))
 }
 
+func (f *fakeActions) ReorderUpcoming(ctx context.Context, urls []string) error {
+	return f.rec("reorder " + strings.Join(urls, ","))
+}
+
 func actionsOf(m Model) *fakeActions { return m.deps.Player.(*fakeActions) }
 
 // run executes a cmd, expanding batches, and feeds the resulting messages back

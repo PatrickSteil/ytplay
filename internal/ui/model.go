@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,6 +45,9 @@ type Actions interface {
 	Remove(ctx context.Context, index int) error
 	MoveUp(ctx context.Context, index int) error
 	MoveDown(ctx context.Context, index int) error
+	// ReorderUpcoming puts the songs after the playing one in the given
+	// order; urls must be exactly the upcoming songs.
+	ReorderUpcoming(ctx context.Context, urls []string) error
 }
 
 // Deps are the things the UI calls out to.
@@ -121,15 +125,21 @@ type Model struct {
 	stats          map[string]trackStats
 	infoAsked      map[string]bool // lookups already started: never repeated unless cancelled
 	analysisAsked  map[string]bool
-	statsCancel    context.CancelFunc // cancels the lookups of the previous track
-	statsDelay     time.Duration
-	coverAsked     map[string]bool // IDs already requested (success or failure): never retried
+	// Songs further down the queue are analysed in the background, a few at a
+	// time, so their tempo is known by the time it is wanted (to sort by it).
+	queueRunning map[string]bool // analyses started for queued songs and not finished
+	queueCtx     context.Context // lives until the app quits, unlike statsCancel
+	queueCancel  context.CancelFunc
+	statsCancel  context.CancelFunc // cancels the lookups of the previous track
+	statsDelay   time.Duration
+	coverAsked   map[string]bool // IDs already requested (success or failure): never retried
 
 	// Queue editing. queueCursor indexes the entries after the current one.
 	queueCursor int
 	queueOff    int  // first visible queue row
 	queueReturn mode // where Esc / Tab goes back to
 	queueBusy   bool // an edit command is in flight
+	sortDesc    bool // the next sort by BPM puts the fastest first
 	confirmFrom mode // where the clear-queue popup returns to
 	radioBusy   bool // a similar-songs lookup is running
 
@@ -166,8 +176,10 @@ func New(d Deps) Model {
 	di := textinput.New()
 	di.Prompt = "> "
 	di.CharLimit = 512
+	queueCtx, queueCancel := context.WithCancel(context.Background())
 	return Model{
 		deps: d, input: ti, dlInput: di, width: 80, height: 24,
+		queueRunning: map[string]bool{}, queueCtx: queueCtx, queueCancel: queueCancel,
 		tracks: map[string]yt.Result{}, pos: -1, idle: true,
 		covers: map[string]string{}, coverAsked: map[string]bool{},
 		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{},
@@ -290,6 +302,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case analysisMsg:
+		delete(m.queueRunning, msg.id)
 		if errors.Is(msg.err, context.Canceled) {
 			delete(m.analysisAsked, msg.id)
 			return m, nil
@@ -301,7 +314,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			st.res, st.hasRes = msg.res, true
 		}
 		m.stats[msg.id] = st
-		return m, nil
+		return m, m.startQueuedAnalyses() // a slot is free
 
 	case coverMsg:
 		if msg.err == nil && msg.rendered != "" {
@@ -369,12 +382,47 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 		}
 	}
 	m.clampQueue()
+	queued := m.startQueuedAnalyses()
 	if cur := m.currentID(); cur != prev {
 		m.elapsed, m.total = 0, 0
 		m.loading = cur != ""
-		return m, tea.Batch(m.fetchCover(cur), m.fetchStats(cur))
+		return m, tea.Batch(m.fetchCover(cur), m.fetchStats(cur), queued)
 	}
-	return m, nil
+	return m, queued
+}
+
+// queueAnalysisWorkers is how many queued songs are analysed at the same time
+// (not counting the playing song, which has its own lookup).
+const queueAnalysisWorkers = 2
+
+// startQueuedAnalyses starts the analysis of upcoming songs that have not been
+// asked about yet, nearest first, while fewer than queueAnalysisWorkers run.
+// A song is asked about once: a failure is not retried.
+func (m *Model) startQueuedAnalyses() tea.Cmd {
+	if m.deps.Analyze == nil {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, e := range m.upcoming() {
+		if len(m.queueRunning) >= queueAnalysisWorkers {
+			break
+		}
+		id := yt.VideoID(e.Filename)
+		if id == "" || m.analysisAsked[id] {
+			continue
+		}
+		m.analysisAsked[id] = true
+		m.queueRunning[id] = true
+		analyse, duration, ctx := m.deps.Analyze, m.tracks[id].Duration, m.queueCtx
+		cmds = append(cmds, func() tea.Msg {
+			res, err := analyse(ctx, id, duration)
+			if ctx.Err() != nil {
+				err = context.Canceled
+			}
+			return analysisMsg{id: id, res: res, err: err}
+		})
+	}
+	return tea.Batch(cmds...)
 }
 
 // fetchStats starts the description and tempo/key lookups for the current
@@ -527,6 +575,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) quit() tea.Cmd {
+	m.queueCancel()
 	if m.searchCancel != nil {
 		m.searchCancel()
 	}
@@ -772,6 +821,8 @@ func (m Model) handleQueueKey(k string) (Model, tea.Cmd, bool) {
 		m.queueCursor = max(m.queueCursor-1, 0)
 		m.scrollQueue()
 		return m, nil, true
+	case keySortBPM:
+		return m.sortQueueByBPM()
 	case keyRemove, keyShiftUp, keyShiftDown:
 		// handled below
 	default:
@@ -780,6 +831,7 @@ func (m Model) handleQueueKey(k string) (Model, tea.Cmd, bool) {
 	if m.queueBusy || n == 0 {
 		return m, nil, true
 	}
+	m.sortDesc = false               // a hand edit starts the next sort from the slowest again
 	idx := m.pos + 1 + m.queueCursor // mpv playlist index of the selection
 	p := m.deps.Player
 	pl := append([]playlistEntry(nil), m.playlist...) // never mutate the shared slice
@@ -823,6 +875,80 @@ func (m Model) handleQueueKey(k string) (Model, tea.Cmd, bool) {
 		cmds = append(cmds, m.setStatus(status, false))
 	}
 	return m, tea.Batch(cmds...), true
+}
+
+// sortQueueByBPM orders the upcoming songs by tempo, slowest (chillest) first;
+// pressed again, fastest first. Songs without a known BPM go last in their old
+// order. The playing song never moves. Like the other edits it updates the
+// list at once and lets the player's events confirm it.
+func (m Model) sortQueueByBPM() (Model, tea.Cmd, bool) {
+	up := m.upcoming()
+	if m.queueBusy || len(up) < 2 {
+		return m, nil, true
+	}
+	type item struct {
+		idx int
+		bpm float64
+	}
+	var known, unknown []item
+	pending, noBPM := 0, 0
+	for i, e := range up {
+		st := m.stats[yt.VideoID(e.Filename)]
+		switch {
+		case st.hasRes && st.res.BPM > 0:
+			known = append(known, item{i, st.res.BPM})
+		case !st.hasRes && !st.analysisFailed && m.deps.Analyze != nil:
+			pending++
+			unknown = append(unknown, item{idx: i})
+		default:
+			noBPM++
+			unknown = append(unknown, item{idx: i})
+		}
+	}
+	desc := m.sortDesc
+	sort.SliceStable(known, func(a, b int) bool {
+		if desc {
+			return known[a].bpm > known[b].bpm
+		}
+		return known[a].bpm < known[b].bpm
+	})
+	order := append(known, unknown...)
+
+	pl := append([]playlistEntry(nil), m.playlist...) // never mutate the shared slice
+	base := m.pos + 1
+	urls := make([]string, len(order))
+	cursor := m.queueCursor
+	for k, it := range order {
+		pl[base+k] = m.playlist[base+it.idx]
+		urls[k] = pl[base+k].Filename
+		if it.idx == m.queueCursor {
+			cursor = k // the selection stays on the same song
+		}
+	}
+	m.playlist, m.queueCursor, m.sortDesc = pl, cursor, !desc
+	m.scrollQueue()
+	m.queueBusy = true
+
+	status := "Sorted by BPM, slowest first"
+	if desc {
+		status = "Sorted by BPM, fastest first"
+	}
+	var notes []string
+	if pending > 0 {
+		notes = append(notes, fmt.Sprintf("%d still being analysed", pending))
+	}
+	if noBPM > 0 {
+		notes = append(notes, fmt.Sprintf("%d without a BPM", noBPM))
+	}
+	if len(notes) > 0 {
+		status += " (" + strings.Join(notes, ", ") + " at the end)"
+	}
+	p := m.deps.Player
+	return m, tea.Batch(func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		defer cancel()
+		return queueEditDoneMsg{err: p.ReorderUpcoming(ctx, urls)}
+	}, m.setStatus(status, false)), true
 }
 
 // radioCount is how many similar songs the radio key adds.

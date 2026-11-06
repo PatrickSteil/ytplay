@@ -26,7 +26,7 @@ From a checkout: `make` builds, `make test` tests, `make install` installs to
 | `q` | append the selected result to the queue |
 | `d` | save the selected result (or the playing song) to a file; a popup asks for the path, Tab completes it (needs ffmpeg) |
 | `r` | add 20 songs similar to the queue |
-| Tab | edit the queue: `j` `k` select, `↑` `↓` move, `x` remove, Tab/Esc back |
+| Tab | edit the queue: `j` `k` select, `↑` `↓` move, `x` remove, `b` sort by BPM (slowest first, again: fastest first), Tab/Esc back |
 | `X` | clear the queue (asks first; the playing song keeps going) |
 | `h` | help popup |
 | `s` | skip |
