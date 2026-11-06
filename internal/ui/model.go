@@ -28,6 +28,7 @@ const (
 	modeQueue                // queue panel focused (remove / reorder)
 	modeConfirm              // "clear the queue?" popup
 	modeDownload             // "save to file" popup
+	modeHelp                 // help popup
 )
 
 // Actions is what the UI needs from the player (implemented by
@@ -133,6 +134,8 @@ type Model struct {
 	radioBusy   bool // a similar-songs lookup is running
 
 	// Download popup.
+	helpFrom mode // where the help popup returns to
+
 	dlInput   textinput.Model
 	dlFrom    mode
 	dlTrack   yt.Result
@@ -496,6 +499,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeConfirm {
 		return m.handleConfirmKey(k)
 	}
+	if m.mode == modeHelp {
+		switch k {
+		case keyEsc, keyHelp, keyEnter, keyQueue, keyQuit:
+			m.mode = m.helpFrom
+			m.clampQueue()
+		}
+		return m, nil
+	}
 	if m.mode == modeDownload {
 		return m.handleDownloadKey(msg)
 	}
@@ -654,6 +665,9 @@ func (m Model) handleGlobalKey(k string) (tea.Model, tea.Cmd) {
 		m.input.CursorEnd()
 		m.replaceOnType = m.query != ""
 		return m, m.input.Focus()
+	case keyHelp:
+		m.helpFrom, m.mode = m.mode, modeHelp
+		return m, nil
 	case keyDownload:
 		e := m.currentEntry()
 		if e == nil {

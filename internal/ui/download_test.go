@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,5 +75,17 @@ func TestDownloadPopupEscAndOverwrite(t *testing.T) {
 	m, cmd = send(m, "enter")
 	if m.mode != modeResults || cmd == nil {
 		t.Errorf("second Enter should download")
+	}
+}
+
+func TestHelpPopup(t *testing.T) {
+	m := withResults(t, 1)
+	m, _ = send(m, "h")
+	if m.mode != modeHelp || !strings.Contains(m.View(), "Patrick Steil") {
+		t.Fatalf("help not shown, mode=%v", m.mode)
+	}
+	m, _ = send(m, "j", "h")
+	if m.mode != modeResults {
+		t.Errorf("mode = %v, want results", m.mode)
 	}
 }

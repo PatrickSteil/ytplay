@@ -17,6 +17,7 @@ const (
 
 	keyDownload   = "d"   // save a song to a file (popup asks where)
 	keyComplete   = "tab" // complete the path in the download popup
+	keyHelp       = "h"   // help popup
 	keyRadio      = "r"   // add songs similar to the queue
 	keyClearQueue = "X"   // clear the queue (asks first)
 	keyConfirm    = "y"   // confirm in the popup

@@ -337,7 +337,7 @@ func (m Model) View() string {
 	} else {
 		v = m.viewStacked()
 	}
-	if m.mode == modeConfirm || m.mode == modeDownload {
+	if m.mode == modeConfirm || m.mode == modeDownload || m.mode == modeHelp {
 		v = m.withPopup(v)
 	}
 	return v
@@ -725,10 +725,47 @@ func (m Model) downloadBox() []string {
 	return lines
 }
 
+// helpBox is the help popup.
+func (m Model) helpBox() []string {
+	w := max(min(70, m.width)-2, 0)
+	row := func(s string) string { return accent.Render("│") + fit(" "+s, w) + accent.Render("│") }
+	key := func(k, d string) string { return accentB.Render(fmt.Sprintf("%-10s", k)) + d }
+	title := " ytplay help "
+	body := []string{
+		"ytplay by Patrick Steil",
+		dim.Render("A simple CLI wrapper to just play music: mpv plays the"),
+		dim.Render("audio, yt-dlp searches and downloads."),
+		"",
+		key("/", "search (Enter runs it, Esc closes the bar)"),
+		key("j / k", "move in results or queue"),
+		key("Enter", "play the selected result now"),
+		key("q", "add the selected result to the queue"),
+		key("d", "save a song to a file (Tab completes the path)"),
+		key("r", "add 20 songs similar to the queue"),
+		key("Tab", "edit queue: j/k select, ↑/↓ move, x remove"),
+		key("X", "clear the queue (asks first)"),
+		key("s", "skip"),
+		key("Space", "pause / resume"),
+		key("0-9, =", "seek to 0%-90%, 100%"),
+		key("h", "this help"),
+		key("Q, Ctrl+C", "quit"),
+		"",
+		dim.Render("h / esc closes this window"),
+	}
+	lines := []string{accent.Render("┌") + bold.Render(clip(title, w)) + accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐")}
+	for _, b := range body[:min(len(body), max(m.height-4, 0))] {
+		lines = append(lines, row(b))
+	}
+	return append(lines, accent.Render("└"+strings.Repeat("─", w)+"┘"))
+}
+
 func (m Model) withPopup(view string) string {
 	box := m.confirmBox()
 	if m.mode == modeDownload {
 		box = m.downloadBox()
+	}
+	if m.mode == modeHelp {
+		box = m.helpBox()
 	}
 	left := max((m.width-lipgloss.Width(box[0]))/2, 0)
 	top := max((m.height-len(box))/2, 0)

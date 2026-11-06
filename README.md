@@ -28,6 +28,7 @@ From a checkout: `make` builds, `make test` tests, `make install` installs to
 | `r` | add 20 songs similar to the queue |
 | Tab | edit the queue: `j` `k` select, `↑` `↓` move, `x` remove, Tab/Esc back |
 | `X` | clear the queue (asks first; the playing song keeps going) |
+| `h` | help popup |
 | `s` | skip |
 | `0`–`9`, `=` | seek to 0%–90%, 100% |
 | Space | pause / resume |
