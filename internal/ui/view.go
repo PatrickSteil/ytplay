@@ -23,10 +23,10 @@ const (
 	helpText         = "/ search  ⏎ play  q queue  r radio  ⇥ edit  X clear  s skip  0-9 = seek  ␣ pause  Q quit"
 	queueHelpText    = "j/k select  ↑/↓ move  x remove  X clear  ⇥/esc back"
 
-	// From this width on the screen is split into three framed columns.
-	wideMinWidth  = 100
+	// From this width on the screen is split into three equally wide framed
+	// columns. A third of it must fit the cover plus frame and padding.
+	wideMinWidth  = 3 * (coverCols + 4)
 	wideMinHeight = 6
-	leftColWidth  = coverCols + 4 // frame + one space of padding on each side
 	// The cover needs the cover rows plus a blank line and three text lines.
 	coverColHeight = coverRows + 4
 )
@@ -146,7 +146,8 @@ func (m Model) nowPlayingText() []string {
 // textWidth is the width available next to the cover.
 func (m Model) textWidth() int {
 	if m.wide() {
-		return leftColWidth - 3
+		lw, _, _ := m.colWidths()
+		return lw - 3 // frame and one space of padding
 	}
 	if m.showCover() {
 		return m.width - coverCols - 3
@@ -381,11 +382,11 @@ func (m Model) wide() bool { return m.width >= wideMinWidth && m.height >= wideM
 // screen line belongs to the status line).
 func (m Model) colInnerHeight() int { return max(m.height-1-2, 0) }
 
-// colWidths are the outer widths of the three columns.
+// colWidths are the outer widths of the three columns: equal thirds, the last
+// one taking the remainder.
 func (m Model) colWidths() (left, queue, search int) {
-	rest := m.width - leftColWidth
-	queue = rest * 45 / 100
-	return leftColWidth, queue, rest - queue
+	third := m.width / 3
+	return third, third, m.width - 2*third
 }
 
 // searchInnerWidth is the usable width of the search column.
@@ -431,7 +432,13 @@ func box(title string, body []string, innerW, innerH int, focused bool) []string
 func (m Model) leftBody(innerH int) []string {
 	body := m.nowPlayingText()
 	if innerH >= coverColHeight {
-		body = append(strings.Split(m.coverFor(), "\n"), append([]string{""}, body...)...)
+		// The cover has a fixed size: center it in the column.
+		pad := strings.Repeat(" ", max((m.textWidth()-coverCols)/2, 0))
+		var cover []string
+		for _, l := range strings.Split(m.coverFor(), "\n") {
+			cover = append(cover, pad+l)
+		}
+		body = append(cover, append([]string{""}, body...)...)
 	}
 	if room := innerH - len(body) - 1; room >= 2 {
 		if stats := m.statsLines(m.textWidth(), room); len(stats) > 0 {
@@ -630,7 +637,9 @@ func (m Model) statsLines(w, avail int) []string {
 			}
 			prefix := ""
 			if c.Likes > 0 {
-				prefix = "♥" + compact(c.Likes) + " "
+				// ASCII on purpose: glyphs such as "♥" are drawn two cells
+				// wide by some terminals and would cover the count.
+				prefix = "(" + compact(c.Likes) + ") "
 			}
 			lines := wrapText(prefix+c.Text, w, min(2, room))
 			for j, l := range lines {

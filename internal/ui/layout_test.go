@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/PatrickSteil/ytplay/internal/yt"
 )
@@ -32,7 +33,7 @@ func TestWideLayoutIsThreeFramedColumns(t *testing.T) {
 }
 
 func TestWideViewFillsTheScreenExactly(t *testing.T) {
-	for _, size := range [][2]int{{100, 30}, {140, 40}, {200, 50}, {100, 16}, {120, 8}} {
+	for _, size := range [][2]int{{108, 30}, {140, 40}, {200, 50}, {108, 16}, {120, 8}} {
 		w, h := size[0], size[1]
 		m := at(withResults(t, 20), w, h)
 		m, _ = update(m, plEvent(t, "*a", "b", "c"))
@@ -53,9 +54,9 @@ func TestWideViewFillsTheScreenExactly(t *testing.T) {
 }
 
 func TestNarrowTerminalKeepsStackedLayout(t *testing.T) {
-	m := at(queueModel(t, 4), 99, 30)
+	m := at(queueModel(t, 4), 107, 30)
 	if strings.Contains(m.View(), "┌") {
-		t.Error("below 100 columns the stacked layout should be used")
+		t.Error("below 108 columns the stacked layout should be used")
 	}
 	if !strings.Contains(m.View(), "Up next (3)") {
 		t.Error("stacked layout lost the queue header")
@@ -163,10 +164,66 @@ func TestWideIdleLeftColumn(t *testing.T) {
 func TestWideLayoutRendersManyEntriesWithoutOverflow(t *testing.T) {
 	m := queueModel(t, 5)
 	m.tracks["e1"] = yt.Result{ID: "e1", Title: strings.Repeat("very long title ", 20), Duration: 3700}
-	m = at(m, 100, 30)
+	m = at(m, 108, 30)
 	for i, l := range viewLines(m) {
-		if lipgloss.Width(l) > 100 {
+		if lipgloss.Width(l) > 108 {
 			t.Errorf("line %d too wide (%d): %q", i, lipgloss.Width(l), l)
 		}
 	}
+}
+
+// boxStarts are the columns where the three frames begin on the top line.
+func boxStarts(t *testing.T, m Model) []int {
+	t.Helper()
+	var starts []int
+	col := 0
+	for _, r := range []rune(ansi.Strip(viewLines(m)[0])) {
+		if r == '┌' {
+			starts = append(starts, col)
+		}
+		col += lipgloss.Width(string(r))
+	}
+	return starts
+}
+
+func TestColumnsAreEqualThirds(t *testing.T) {
+	tests := []struct {
+		width int
+		want  []int // where the second and third frames start; the first is at 0
+	}{
+		{108, []int{36, 72}}, // 36 + 36 + 36
+		{120, []int{40, 80}}, // 40 + 40 + 40
+		{140, []int{46, 92}}, // 46 + 46 + 48: the last column takes the remainder
+		{200, []int{66, 132}},
+	}
+	for _, tt := range tests {
+		m := at(queueModel(t, 4), tt.width, 30)
+		starts := boxStarts(t, m)
+		if len(starts) != 3 || starts[0] != 0 || starts[1] != tt.want[0] || starts[2] != tt.want[1] {
+			t.Errorf("width %d: frames start at %v, want [0 %d %d]", tt.width, starts, tt.want[0], tt.want[1])
+		}
+	}
+}
+
+func TestCoverFitsAtTheNarrowestColumnLayoutAndIsCenteredWhenWider(t *testing.T) {
+	cover := strings.Repeat("░", 32)
+	for _, w := range []int{108, 140, 200} {
+		m := at(queueModel(t, 3), w, 30)
+		if !strings.Contains(m.View(), cover) {
+			t.Errorf("width %d: the 32-column cover does not fit", w)
+		}
+	}
+	// In a wide column the cover is centered in the column's usable width.
+	m := at(queueModel(t, 3), 200, 30) // columns of 66: usable 63, cover 32
+	for _, l := range viewLines(m) {
+		plain := ansi.Strip(l)
+		if i := strings.Index(plain, cover); i >= 0 {
+			left := len([]rune(plain[:i]))
+			if left < 10 || left > 20 {
+				t.Errorf("cover starts at column %d, expected it roughly centered (about 16)", left)
+			}
+			return
+		}
+	}
+	t.Error("cover not found")
 }

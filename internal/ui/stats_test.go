@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/PatrickSteil/ytplay/internal/analyze"
 	"github.com/PatrickSteil/ytplay/internal/yt"
@@ -195,7 +196,7 @@ func TestAnalysingIsShownWhileTheAnalysisRuns(t *testing.T) {
 }
 
 func TestStatsNeverOverflowTheColumns(t *testing.T) {
-	for _, size := range [][2]int{{100, 14}, {100, 18}, {120, 22}, {140, 30}, {200, 60}, {100, 8}} {
+	for _, size := range [][2]int{{108, 14}, {108, 18}, {120, 22}, {140, 30}, {200, 60}, {108, 8}} {
 		m := playingWithStats(t, size[0], size[1])
 		ls := viewLines(m)
 		if len(ls) != size[1] {
@@ -301,5 +302,27 @@ func TestQuitCancelsPendingLookups(t *testing.T) {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
 		t.Error("quitting did not cancel the running lookup")
+	}
+}
+
+func TestCommentLikesUseNarrowCharactersOnly(t *testing.T) {
+	// "♥" has an ambiguous width: many terminals draw it two cells wide and it
+	// then covers the first digit of the count. Plain ASCII cannot do that.
+	out := playingWithStats(t, 140, 44).View()
+	if strings.Contains(out, "♥") {
+		t.Error("the heart glyph must not be used")
+	}
+	plain := ansi.Strip(out)
+	for _, want := range []string{"(48K) 1993 to 2021", "(8.7K) It's 2023"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("missing %q in:\n%s", want, plain)
+		}
+	}
+	// A comment nobody liked has no count at all.
+	m := playingWithStats(t, 140, 44)
+	m, _ = update(m, infoMsg{id: "a", info: yt.Info{Comments: []yt.Comment{{Text: "unloved comment"}}}})
+	plain = ansi.Strip(m.View())
+	if !strings.Contains(plain, "unloved comment") || strings.Contains(plain, "(0)") || strings.Contains(plain, "() ") {
+		t.Errorf("zero-like comment rendered wrongly:\n%s", plain)
 	}
 }
