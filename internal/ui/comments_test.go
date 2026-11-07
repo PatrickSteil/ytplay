@@ -82,36 +82,44 @@ func commentsHeader(m Model) string {
 	return ""
 }
 
-func TestTheCommentsHeaderSaysWhichOnesAreShown(t *testing.T) {
+// shownCount is how many comments the screen shows.
+func shownCount(m Model) int {
+	got := commentsOnScreen(m)
+	if got == "" {
+		return 0
+	}
+	return len(strings.Split(got, ","))
+}
+
+func TestCommentsFillTheSpaceBelowEachOther(t *testing.T) {
 	m, _ := commentsModel(t, 40, 140, 50)
-	if got := commentsOnScreen(m); got != "01,02,03" {
-		t.Errorf("comments on screen = %q, want the first three", got)
+	if got := commentsOnScreen(m); got != "01,02,03,04,05,06,07,08,09,10" {
+		t.Errorf("comments on screen = %q, want all ten that were fetched", got)
 	}
 	h := commentsHeader(m)
-	for _, want := range []string{"1–3 of 10+", ":comments"} {
+	for _, want := range []string{"1–10 of 10+", ":comments"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("header = %q, want it to contain %q (there may be more on YouTube)", h, want)
 		}
 	}
-	few, _ := commentsModel(t, 2, 140, 50) // all there is, fits on one page
+	few, _ := commentsModel(t, 2, 140, 50) // all there is
 	if h := commentsHeader(few); !strings.Contains(h, "1–2 of 2") || strings.Contains(h, "+") || strings.Contains(h, ":comments") {
 		t.Errorf("a video with two comments: header %q, want 1–2 of 2 and no hint to load more", h)
 	}
 }
 
-func TestCommentsCommandPagesThroughWhatWasFetched(t *testing.T) {
-	m, f := commentsModel(t, 40, 140, 50)
-	for _, want := range []string{"04,05,06", "07,08,09", "10"} {
-		m = doCmd(m, "comments")
-		if got := commentsOnScreen(m); got != want {
-			t.Errorf("after :comments the screen shows %q, want %q", got, want)
-		}
+func TestCommentsCommandPagesWhenTheyDoNotAllFit(t *testing.T) {
+	m, f := commentsModel(t, 100, 140, 30)
+	k := shownCount(m)
+	if k < 2 || k >= firstComments {
+		t.Fatalf("%d comments fit at this height: the test needs a short panel", k)
+	}
+	m = doCmd(m, "comments")
+	if got, want := commentsOnScreen(m), fmt.Sprintf("%02d", k+1); !strings.HasPrefix(got, want) {
+		t.Errorf("after :comments the screen shows %q, want it to go on with %s", got, want)
 	}
 	if len(f.asked()) != 0 {
 		t.Errorf("paging through what is there must not fetch: %v", f.asked())
-	}
-	if h := commentsHeader(m); !strings.Contains(h, "10 of 10+") {
-		t.Errorf("header on the last comment = %q", h)
 	}
 }
 
@@ -126,15 +134,9 @@ func doCmd(m Model, text string) Model {
 	return m
 }
 
-func TestCommentsCommandAtTheEndLoadsMoreAndShowsThem(t *testing.T) {
+func TestCommentsCommandAddsMoreBelowTheOnesThatAreThere(t *testing.T) {
 	m, f := commentsModel(t, 100, 140, 50)
-	m = doCmd(m, "comments")
-	m = doCmd(m, "comments")
-	m = doCmd(m, "comments") // 10 is the last of the ten
-	if len(f.asked()) != 0 {
-		t.Fatalf("fetched too early: %v", f.asked())
-	}
-	next, cmd := typeCommand(m, "comments") // at the end: load more
+	next, cmd := typeCommand(m, "comments") // all ten are in view: load more
 	if !strings.Contains(next.status, "Loading more comments") {
 		t.Errorf("status = %q, want it to say it is loading", next.status)
 	}
@@ -147,25 +149,32 @@ func TestCommentsCommandAtTheEndLoadsMoreAndShowsThem(t *testing.T) {
 	if got := f.asked(); len(got) != 1 || got[0] != (infoCall{"a", 30}) {
 		t.Errorf("fetches = %v, want one for 30 comments of a", got)
 	}
-	if got := commentsOnScreen(next); got != "11,12,13" {
-		t.Errorf("after loading the screen shows %q, want the first new comments 11,12,13", got)
+	if got := commentsOnScreen(next); !strings.HasPrefix(got, "01,02,03,04,05,06,07,08,09,10,11,12") {
+		t.Errorf("after loading the screen shows %q, want the old ones with the new ones below", got)
 	}
-	if h := commentsHeader(next); !strings.Contains(h, "11–13 of 30+") {
+	if h := commentsHeader(next); !strings.Contains(h, "of 30+") {
 		t.Errorf("header = %q", h)
 	}
 }
 
-func TestCommentsWrapAroundWhenThereAreNoMore(t *testing.T) {
-	m, f := commentsModel(t, 7, 140, 50) // the video only has seven
-	for _, want := range []string{"04,05,06", "07"} {
+func TestLoadedCommentsOutOfViewAreScrolledTo(t *testing.T) {
+	m, f := commentsModel(t, 100, 140, 30) // room for only a few
+	for i := 0; i < 20 && len(f.asked()) == 0; i++ {
 		m = doCmd(m, "comments")
-		if got := commentsOnScreen(m); got != want {
-			t.Errorf("screen = %q, want %q", got, want)
-		}
 	}
+	if len(f.asked()) == 0 {
+		t.Fatal("never fetched")
+	}
+	if got := commentsOnScreen(m); !strings.Contains(got, "11") {
+		t.Errorf("after loading the screen shows %q, want the first new comment, 11, in view", got)
+	}
+}
+
+func TestCommentsWrapAroundWhenThereAreNoMore(t *testing.T) {
+	m, f := commentsModel(t, 7, 140, 50) // the video only has seven, all in view
 	m = doCmd(m, "comments")
-	if got := commentsOnScreen(m); got != "01,02,03" || !strings.Contains(m.status, "last") {
-		t.Errorf("after the last comment: screen %q status %q, want back to the first comments", got, m.status)
+	if got := commentsOnScreen(m); got != "01,02,03,04,05,06,07" || !strings.Contains(m.status, "last") {
+		t.Errorf("at the end: screen %q status %q, want it back at the first comments", got, m.status)
 	}
 	if len(f.asked()) != 0 {
 		t.Errorf("a video with seven comments must not be asked for more: %v", f.asked())
@@ -191,21 +200,18 @@ func TestLoadingMoreCommentsStopsAtAHundred(t *testing.T) {
 
 func TestAFailedLoadOfMoreCommentsKeepsWhatIsThere(t *testing.T) {
 	m, f := commentsModel(t, 100, 140, 50)
-	m = doCmd(m, "comments")
-	m = doCmd(m, "comments")
-	m = doCmd(m, "comments")
 	f.err = errors.New("network down")
 	m = doCmd(m, "comments")
 	if !m.statusIsErr || !strings.Contains(m.status, "network down") {
 		t.Errorf("status = %q (error %v), want the failure said", m.status, m.statusIsErr)
 	}
-	if got := commentsOnScreen(m); got != "10" {
-		t.Errorf("after the failure the screen shows %q, want the last comment still there", got)
+	if got := commentsOnScreen(m); got != "01,02,03,04,05,06,07,08,09,10" {
+		t.Errorf("after the failure the screen shows %q, want the comments still there", got)
 	}
 	f.err = nil
 	m = doCmd(m, "comments") // it can be tried again
-	if got := commentsOnScreen(m); got != "11,12,13" {
-		t.Errorf("after trying again the screen shows %q, want 11,12,13", got)
+	if got := commentsOnScreen(m); !strings.Contains(got, ",11,") {
+		t.Errorf("after trying again the screen shows %q, want the new comments too", got)
 	}
 }
 

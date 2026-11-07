@@ -13,7 +13,6 @@ const (
 	firstComments = 10  // how many the first fetch asks for
 	commentsStep  = 20  // how many more each further fetch asks for
 	commentsMax   = 100 // and the most that is asked for
-	commentsPage  = 3   // comments on a page (fewer if the panel is short)
 )
 
 // maybeMoreComments says whether YouTube may have more comments than were
@@ -113,10 +112,17 @@ func (m Model) handleMoreComments(msg moreCommentsMsg) (Model, tea.Cmd) {
 	st.info, st.commentsAsked = msg.info, msg.asked
 	text := "No more comments"
 	if got := len(msg.info.Comments); got > had {
-		st.commentsOff = had
 		text = fmt.Sprintf("Loaded %d more comments", got-had)
 	}
 	m.stats[msg.id] = st
+	if got := len(msg.info.Comments); got > had && msg.id == m.currentID() {
+		// The new ones go below the old ones; if they are out of view, scroll to
+		// the first of them.
+		if st.commentsOff+m.commentsShown() <= had {
+			st.commentsOff = had
+			m.stats[msg.id] = st
+		}
+	}
 	status := m.setStatus(text, false)
 	return m, status
 }
