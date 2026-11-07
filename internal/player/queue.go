@@ -76,6 +76,15 @@ func (q *queue) upcoming() []string {
 	return slices.Clone(q.urls[q.pos+1:])
 }
 
+// setUpcoming replaces the entries after the playing one (all of them when
+// none plays: nothing, there must be no urls then).
+func (q *queue) setUpcoming(urls []string) {
+	if q.pos < 0 {
+		return
+	}
+	q.urls = append(slices.Clone(q.urls[:q.pos+1]), urls...)
+}
+
 // reorderUpcoming puts the entries after the playing one in the given order.
 // urls must hold exactly the upcoming URLs, duplicates counted.
 func (q *queue) reorderUpcoming(urls []string) error {

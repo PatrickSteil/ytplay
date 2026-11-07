@@ -396,8 +396,9 @@ func (p *Player) startNext(tr *transition) bool {
 // setGains sets the volumes of the two decks for a position u (0..1) in the
 // overlap, along an equal-power curve. The caller holds p.mu.
 func (p *Player) setGains(ctx context.Context, tr *transition, u float64) {
-	va := volumeFor(math.Cos(math.Pi / 2 * u))
-	vb := volumeFor(math.Sin(math.Pi / 2 * u))
+	scale := p.master / 100 // the ramp's volumes times the master multiply mpv's cubic gains
+	va := volumeFor(math.Cos(math.Pi/2*u)) * scale
+	vb := volumeFor(math.Sin(math.Pi/2*u)) * scale
 	if math.Abs(va-tr.lastA) >= 0.25 {
 		if _, err := p.decks[p.active].Command(ctx, "set_property", "volume", va); err == nil {
 			tr.lastA = va
@@ -418,14 +419,14 @@ func (p *Player) takeOver(ctx context.Context) {
 	p.pre = nil
 	old := p.decks[p.active]
 	_, _ = old.Command(ctx, "stop")
-	_, _ = old.Command(ctx, "set_property", "volume", 100)
+	_, _ = old.Command(ctx, "set_property", "volume", p.master)
 	p.active, p.entryID = pre.deck, pre.entryID
 	p.q.pos++
 	p.startEase(pre.deck, ease)
 	p.emitState()
 }
 
-// endTransition stops the ramp loop and puts the volumes back to full. If
+// endTransition stops the ramp loop and puts the volumes back to the master. If
 // restorePlaying is true the playing song's volume is restored too. If the
 // next song is not going on to be played (continuing is false) its speed goes
 // back to normal too. It does nothing if there is no transition. The caller
@@ -440,13 +441,13 @@ func (p *Player) endTransition(ctx context.Context, restorePlaying, continuing b
 		tr.cancel()
 	}
 	if tr.prepared && p.pre != nil {
-		_, _ = p.decks[p.pre.deck].Command(ctx, "set_property", "volume", 100)
+		_, _ = p.decks[p.pre.deck].Command(ctx, "set_property", "volume", p.master)
 		if !continuing {
 			p.resetSpeed(ctx, p.pre.deck)
 		}
 	}
 	if restorePlaying && tr.started {
-		_, _ = p.decks[p.active].Command(ctx, "set_property", "volume", 100)
+		_, _ = p.decks[p.active].Command(ctx, "set_property", "volume", p.master)
 	}
 }
 

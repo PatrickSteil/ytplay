@@ -7,7 +7,9 @@ package player
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -45,7 +47,10 @@ type Player struct {
 	q       queue
 	entryID int64 // playlist_entry_id of the file loaded on the active deck, 0 if none
 	paused  bool
-	pre     *preload // the next song, loaded and paused on the idle deck
+	// master is the volume the user chose, in percent of full. Every volume the
+	// engine sets is scaled by it, and a deck at rest is at it.
+	master float64
+	pre    *preload // the next song, loaded and paused on the idle deck
 	// preFailed is a song whose preload failed; it is not tried again.
 	preFailed string
 	// noPreload is set when the second deck could not be started or died: the
@@ -76,7 +81,7 @@ func New(ctx context.Context, start StartDeck) (*Player, error) {
 		return nil, err
 	}
 	p := &Player{
-		start: start, q: queue{pos: -1}, epoch: time.Now(), speed: [2]float64{1, 1},
+		start: start, q: queue{pos: -1}, epoch: time.Now(), speed: [2]float64{1, 1}, master: 100,
 		events:  make(chan mpv.Event, 256),
 		done:    make(chan struct{}),
 		stopped: make(chan struct{}),
@@ -306,6 +311,85 @@ func (p *Player) SeekPercent(ctx context.Context, n int) error {
 	return p.cmd(ctx, "seek", n, "absolute-percent")
 }
 
+// SeekTo seeks to an absolute time (seconds) in the current song.
+func (p *Player) SeekTo(ctx context.Context, seconds float64) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.q.pos < 0 {
+		return nil
+	}
+	return p.cmd(ctx, "seek", seconds, "absolute")
+}
+
+// SeekBy seeks by a number of seconds, back if it is negative.
+func (p *Player) SeekBy(ctx context.Context, seconds float64) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.q.pos < 0 {
+		return nil
+	}
+	return p.cmd(ctx, "seek", seconds, "relative")
+}
+
+// prevRestart is how long a song may have played for Prev to go back to its
+// beginning instead of to the song before.
+const prevRestart = 3.0
+
+// Prev goes back: to the song before if this one has only just started, else to
+// the beginning of this one (which is also all there is to do on the first song).
+func (p *Player) Prev(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.q.pos < 0 {
+		return nil
+	}
+	elapsed, err := p.decks[p.active].GetFloat(ctx, "time-pos")
+	if p.q.pos == 0 || (err == nil && elapsed > prevRestart) {
+		return p.cmd(ctx, "seek", 0, "absolute")
+	}
+	p.dropPreload(ctx) // it is the song after this one, which is about to be the one after the next
+	p.playFrom(ctx, p.q.pos-1)
+	return nil
+}
+
+// Volume is the master volume, in percent of full.
+func (p *Player) Volume() float64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.master
+}
+
+// SetVolume sets the master volume (0 to 100, in percent of full; mpv's own
+// scale is cubic, this is the scale it is on). It reaches the decks at rest at
+// once and a transition on its next step: while one is on, its ramp owns the
+// volumes of the decks it fades.
+func (p *Player) SetVolume(ctx context.Context, percent float64) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.master = math.Max(0, math.Min(percent, 100))
+	var first error
+	for i, d := range p.decks {
+		if d == nil || p.rampOwns(i) {
+			continue
+		}
+		if _, err := d.Command(ctx, "set_property", "volume", p.master); err != nil && first == nil {
+			first = fmt.Errorf("volume: %w", err)
+		}
+	}
+	return first
+}
+
+// rampOwns says whether deck i's volume is being set by a transition: the next
+// song's deck from when it is prepared (silent), both from when it has started.
+// The caller holds p.mu.
+func (p *Player) rampOwns(i int) bool {
+	tr := p.trans
+	if tr == nil || p.pre == nil {
+		return false
+	}
+	return (tr.prepared && i == p.pre.deck) || (tr.started && i == p.active)
+}
+
 // TogglePause pauses or resumes.
 func (p *Player) TogglePause(ctx context.Context) error {
 	p.mu.Lock()
@@ -371,6 +455,23 @@ func (p *Player) MoveDown(ctx context.Context, i int) error {
 	if err := p.q.swap(i, i+1); err != nil {
 		return err
 	}
+	p.syncPreload(ctx)
+	p.emitState()
+	return nil
+}
+
+// SetUpcoming replaces the songs after the playing one, so songs can be added,
+// removed and put in any order at once (this is what undoing a queue edit needs).
+func (p *Player) SetUpcoming(ctx context.Context, urls []string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.q.pos < 0 {
+		if len(urls) != 0 {
+			return errors.New("nothing is playing, so there are no upcoming songs")
+		}
+		return nil
+	}
+	p.q.setUpcoming(urls)
 	p.syncPreload(ctx)
 	p.emitState()
 	return nil

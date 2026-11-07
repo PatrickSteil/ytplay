@@ -93,6 +93,9 @@ func (p *Player) startPreload(ctx context.Context) {
 		}
 		p.decks[i] = d
 		p.watch(i, d)
+		if p.master != 100 { // a new deck starts at full volume
+			_, _ = d.Command(ctx, "set_property", "volume", p.master)
+		}
 	}
 	d := p.decks[i]
 	p.resetSpeed(ctx, i) // a speed left over from an easing that was cut short
@@ -149,7 +152,7 @@ func (p *Player) handoff(ctx context.Context) bool {
 	}
 	_, _ = p.decks[p.active].Command(ctx, "stop")
 	if hadTransition {
-		_, _ = p.decks[p.active].Command(ctx, "set_property", "volume", 100)
+		_, _ = p.decks[p.active].Command(ctx, "set_property", "volume", p.master)
 	}
 	p.active, p.entryID = pre.deck, pre.entryID
 	p.q.pos++
