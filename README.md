@@ -62,17 +62,23 @@ the queue after Tab.
 | `:shuffle` | | shuffle the queue (the playing song stays) |
 | `:download` | `:d` | save the highlighted result or queue entry (the playing song if nothing is highlighted) to a file; a popup asks for the path, Tab completes it (needs ffmpeg) |
 | `:auto` | `:a` | switch autodj on or off (off at start): the next song then starts under the last 4 bars of the playing one (inside its last 30 s, where its beat is playing) and comes in where its own beat starts, even a minute or more into the song, beat-matched (its tempo adjusted by up to 6%; a song at twice or half the tempo, like 70 into 140 BPM, is matched in double or half time, every beat of the slower one meeting a beat of the faster one, with no big speed change) when both songs have a beat the analysis is sure of, otherwise a plain 6 s crossfade; the DJ popup says which it will be. Until you use `:auto` or `:dj` only the playing song is analysed, lightly (tempo and key, one core); after that it is analysed completely and the whole queue in parallel (up to four songs at once, on up to half the cores) |
-| `:dj` | | DJ popup: the playing song and the queue with their BPM; `j` `k` select, Esc or `:dj` closes. The command line opens over it, and these run inside it: `:sort`, `:bpm`, `:auto`, `:shuffle`, `:undo`, `:vol`, `:mute`, `:help` and `:quit` |
+| `:dj` | | DJ popup: the playing song and the queue with their BPM and key (coloured by position on the Camelot wheel, so mixable keys look alike); `j` `k` select, Esc or `:dj` closes. The command line opens over it, and these run inside it: `:sort`, `:bpm`, `:auto`, `:shuffle`, `:undo`, `:vol`, `:mute`, `:help` and `:quit` |
 | `:sort` | `:b` | in the DJ popup: sort the queue by BPM (slowest first, again: fastest first) |
 | `:bpm N` | `:e` | in the DJ popup: set the highlighted song's BPM by hand (`*`; kept until ytplay quits); `:bpm` alone goes back to the detected one |
 | `:radio N` | `:r` | add up to N songs similar to the queue (1 to 50, default 10) |
-| `:comments` | `:c` | the next comments of the playing song (three at a time, in the wide layout); when the ones fetched are used up it loads 20 more from YouTube, up to 100, and after the last one starts again at the first |
+| `:comments` | `:c` | the comments of the playing song, as many below each other as fit in the wide layout; when all fetched ones are in view it loads 20 more from YouTube (up to 100) and adds them below (scrolling to them if they are out of view), otherwise it pages on; after the last one it starts again at the first |
 | `:clear` | `:X` | clear the queue (asks first: `y` or `n`; the playing song keeps going) |
 | `:help` | `:h` | help popup (`j` `k` scroll on a small terminal) |
 | `:quit` | `:q` | quit |
 
 Terminals 108+ columns wide show three equal columns (now playing, queue, search);
-narrower ones get a stacked layout. Under the current song ytplay shows description, views/likes, top comments and an
+narrower ones get a stacked layout. Under the cover is the waveform of the playing
+song: its loudness over time, mirrored around a middle line, the part already played in
+the accent colour and the playhead in bold (beside the cover in the stacked layout; two
+rows, four on a tall screen, none on a screen too short to leave room for the text
+below it; while `:auto` is on, the stretch where the next song comes in is lit up in bold). It is drawn from the audio the analysis fetches anyway, so it appears
+a few seconds into a song, as a flat line until then; of a track longer than 10
+minutes only the middle is seen, and the rest stays a flat line. Below that ytplay shows description, views/likes, top comments and an
 estimated BPM and key (worked out from the whole song; no BPM is shown for audio
 without a steady beat, such as speech or ambient music; expect the occasional
 half/double tempo or neighbouring key). While running, ytplay shows up in the

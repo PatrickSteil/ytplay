@@ -171,6 +171,7 @@ func (m Model) renderTop() []string {
 	for i, l := range text {
 		text[i] = clip(l, textW)
 	}
+	text = m.besideCover(text, textW)
 	joined := lipgloss.JoinHorizontal(lipgloss.Top, m.coverFor(), "   ", strings.Join(text, "\n"))
 	return strings.Split(joined, "\n")
 }
@@ -515,6 +516,9 @@ func (m Model) leftBodyN(innerH int) (body []string, comments int) {
 		for _, l := range strings.Split(m.coverFor(), "\n") {
 			cover = append(cover, pad+l)
 		}
+		if rows := m.waveRows(innerH); rows > 0 {
+			cover = append(append(cover, ""), m.waveLines(m.textWidth(), rows)...)
+		}
 		body = append(cover, append([]string{""}, body...)...)
 	}
 	if room := innerH - len(body) - 1; room >= 2 {
@@ -716,13 +720,13 @@ func (m Model) statsLinesN(w, avail int) (lines []string, comments int) {
 		}
 	}
 
-	// Comments: a page of up to three, two lines each, as many as fit, from the one
+	// Comments: two lines each, as many as fit below each other, from the one
 	// the user has paged to (:comments).
 	n := len(st.info.Comments)
 	if room := avail - len(out); n > 0 && room >= 3 {
 		off := min(st.commentsOff, n-1)
 		var body []string
-		for i := off; i < n && comments < commentsPage; i++ {
+		for i := off; i < n; i++ {
 			room = avail - len(out) - 2 - len(body) // the blank line and the header come first
 			if room <= 0 {
 				break
@@ -858,18 +862,20 @@ func (m Model) djBox() []string {
 	if m.djCursor >= off+win {
 		off = m.djCursor - win + 1
 	}
-	titleW := max(w-1-2-1-9, 1)
+	titleW := max(w-1-2-1-9-4, 1) // marker, title, tempo, key
 	for r := off; r < min(off+win, n); r++ {
 		e := m.djEntry(r)
 		name, _, _ := m.entryInfo(e)
-		text := fit(safe(name), titleW) + " " + m.djTempo(yt.VideoID(e.Filename))
+		id := yt.VideoID(e.Filename)
+		text := fit(safe(name), titleW) + " " + m.djTempo(id)
+		key := m.djKey(id)
 		switch {
 		case r == m.djCursor:
-			lines = append(lines, row(th.accentB.Render("> ")+th.accentB.Render(ansi.Strip(text))))
+			lines = append(lines, row(th.accentB.Render("> ")+th.accentB.Render(ansi.Strip(text))+key))
 		case r == 0:
-			lines = append(lines, row(th.accent.Render("▶ ")+text))
+			lines = append(lines, row(th.accent.Render("▶ ")+text+key))
 		default:
-			lines = append(lines, row("  "+text))
+			lines = append(lines, row("  "+text+key))
 		}
 	}
 	autoLine := dim.Render("autodj off · :auto switches it on")

@@ -76,15 +76,22 @@ func decode(ctx context.Context, mpvPath, ytdlpPath, url string, start, length i
 // maxSeconds of a longer track. duration (seconds, 0 if unknown) decides
 // which. If that part does not exist the beginning is used instead.
 func Fetch(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64) ([]float32, error) {
+	pcm, _, err := fetch(ctx, mpvPath, ytdlpPath, id, duration)
+	return pcm, err
+}
+
+// fetch is Fetch, and also says how many seconds into the song the audio starts:
+// where the middle begins, or 0 if the beginning was used instead.
+func fetch(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64) ([]float32, int, error) {
 	url := "https://www.youtube.com/watch?v=" + id
 	start := windowStart(duration)
 	pcm, err := decode(ctx, mpvPath, ytdlpPath, url, start, maxSeconds)
 	if (err != nil || len(pcm) < minSeconds*SampleRate) && start > 0 && ctx.Err() == nil {
 		if retry, rerr := decode(ctx, mpvPath, ytdlpPath, url, 0, maxSeconds); rerr == nil {
-			return retry, nil
+			return retry, 0, nil
 		}
 	}
-	return pcm, err
+	return pcm, start, err
 }
 
 // Excerpt is the part of a song that the audio is: Offset seconds into a song
@@ -106,8 +113,12 @@ const wholeSlack = 3.0
 // seems. Tempo and key are those of the excerpt.
 func analyzeExcerpt(pcm []float32, x Excerpt, o Options) (Result, error) {
 	res, err := AnalyzeWith(pcm, o)
-	if err != nil || res.Level == Light {
+	if err != nil {
 		return res, err
+	}
+	res.Wave.Offset = x.Offset
+	if res.Level == Light {
+		return res, nil
 	}
 	seconds := float64(len(pcm)) / SampleRate
 	switch {
@@ -123,13 +134,13 @@ func analyzeExcerpt(pcm []float32, x Excerpt, o Options) (Result, error) {
 // SongWith fetches a YouTube video and analyses it as Options asks. If the audio
 // is not all of the song (see Excerpt) the edges that cannot be known are left
 // out. (If reading the middle of a long track failed and the beginning was read
-// instead, the edges are left out as well: safe, not exact.)
+// instead, the audio is the beginning of the song, and is described as that.)
 func SongWith(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64, o Options) (Result, error) {
-	pcm, err := Fetch(ctx, mpvPath, ytdlpPath, id, duration)
+	pcm, start, err := fetch(ctx, mpvPath, ytdlpPath, id, duration)
 	if err != nil {
 		return Result{}, err
 	}
-	return analyzeExcerpt(pcm, Excerpt{Offset: float64(windowStart(duration)), Duration: duration}, o)
+	return analyzeExcerpt(pcm, Excerpt{Offset: float64(start), Duration: duration}, o)
 }
 
 // Song fetches and analyses a YouTube video completely.

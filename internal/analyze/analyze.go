@@ -40,6 +40,8 @@ type Result struct {
 	Edges Edges
 	// Level says how much was asked for. A Light result has no Edges.
 	Level Level
+	// Wave is the loudness over the analysed audio, for drawing.
+	Wave Wave
 }
 
 // Level is how much of an analysis is wanted.
@@ -77,7 +79,7 @@ func AnalyzeWith(pcm []float32, o Options) (Result, error) {
 	if math.Sqrt(energy/float64(len(pcm))) < 1e-4 {
 		return Result{}, errors.New("audio is silent")
 	}
-	res := Result{Level: o.Level}
+	res := Result{Level: o.Level, Wave: waveOf(pcm, 0)}
 	// The key does not depend on the tempo: with a pool it is worked out beside it.
 	var key string
 	var keyScore float64

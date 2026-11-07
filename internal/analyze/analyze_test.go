@@ -3,6 +3,7 @@ package analyze
 import (
 	"math"
 	"math/cmplx"
+	"reflect"
 	"testing"
 )
 
@@ -137,7 +138,7 @@ func TestAnalysisIsDeterministic(t *testing.T) {
 	x := clickTrack(120, 20)
 	a, _ := Analyze(x)
 	b, _ := Analyze(x)
-	if a != b {
+	if !reflect.DeepEqual(a, b) {
 		t.Errorf("results differ: %+v vs %+v", a, b)
 	}
 }
