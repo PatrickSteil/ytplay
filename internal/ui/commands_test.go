@@ -232,8 +232,13 @@ func TestTabCompletesACommandName(t *testing.T) {
 	if got := completeCommand("d"); got != "d" {
 		t.Errorf("completeCommand(d) = %q, d is the start of delete, download and dj: nothing common beyond it", got)
 	}
-	if got := completeCommand("c"); got != "clear " {
-		t.Errorf("completeCommand(c) = %q, want clear and a space", got)
+	if got := completeCommand("c"); got != "c" {
+		t.Errorf("completeCommand(c) = %q: clear and comments share nothing beyond c", got)
+	}
+	for in, want := range map[string]string{"cl": "clear ", "co": "comments ", "ra": "radio "} {
+		if got := completeCommand(in); got != want {
+			t.Errorf("completeCommand(%s) = %q, want %q", in, got, want)
+		}
 	}
 }
 

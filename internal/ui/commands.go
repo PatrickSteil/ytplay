@@ -45,6 +45,7 @@ var commands = []command{
 	{name: "undo", short: []string{"u"}, run: cmdUndo, inPopup: true, usage: ":undo", about: "undo the last queue change (also the key u)"},
 	{name: "shuffle", run: cmdShuffle, inPopup: true, usage: ":shuffle", about: "shuffle the queue"},
 	{name: "download", short: []string{"d"}, run: cmdDownload, usage: ":download", about: "save the highlighted song to a file"},
+	{name: "comments", short: []string{"c"}, run: cmdComments, usage: ":comments", about: "the next comments of this song (loads more when used up)"},
 	{name: "radio", short: []string{"r"}, run: cmdRadio, usage: ":radio N", about: "add up to N (default 10) songs similar to the queue"},
 	{name: "clear", short: []string{"X"}, run: cmdClear, usage: ":clear", about: "clear the queue (asks first)"},
 	{name: "auto", short: []string{"a"}, run: cmdAuto, inPopup: true, usage: ":auto", about: "autodj on or off (the next song mixes in early)"},

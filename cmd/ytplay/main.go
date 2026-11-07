@@ -114,8 +114,8 @@ func runTUI(ytdlp, mpvPath string) int {
 		Search: func(ctx context.Context, q string) ([]yt.Result, error) {
 			return yt.Search(ctx, ytdlp, q, 15)
 		},
-		Info: func(ctx context.Context, id string) (yt.Info, error) {
-			return yt.FetchInfo(ctx, ytdlp, id, 10)
+		Info: func(ctx context.Context, id string, comments int) (yt.Info, error) {
+			return yt.FetchInfo(ctx, ytdlp, id, comments)
 		},
 		Analyze: func(ctx context.Context, id string, duration float64, level analyze.Level) (analyze.Result, error) {
 			o := analyze.Options{Level: level}

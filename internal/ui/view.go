@@ -501,7 +501,13 @@ func box(th theme, title string, body []string, innerW, innerH int, focused bool
 
 // leftBody is the now-playing column: cover on top, track info below.
 func (m Model) leftBody(innerH int) []string {
-	body := m.nowPlayingText()
+	body, _ := m.leftBodyN(innerH)
+	return body
+}
+
+// leftBodyN is the now-playing column, and how many comments it shows.
+func (m Model) leftBodyN(innerH int) (body []string, comments int) {
+	body = m.nowPlayingText()
 	if innerH >= coverColHeight {
 		// The cover has a fixed size: center it in the column.
 		pad := strings.Repeat(" ", max((m.textWidth()-coverCols)/2, 0))
@@ -512,11 +518,11 @@ func (m Model) leftBody(innerH int) []string {
 		body = append(cover, append([]string{""}, body...)...)
 	}
 	if room := innerH - len(body) - 1; room >= 2 {
-		if stats := m.statsLines(m.textWidth(), room); len(stats) > 0 {
-			body = append(append(body, ""), stats...)
+		if stats, n := m.statsLinesN(m.textWidth(), room); len(stats) > 0 {
+			body, comments = append(append(body, ""), stats...), n
 		}
 	}
-	return body
+	return body, comments
 }
 
 func (m Model) searchBody(w, innerH int) []string {
@@ -679,9 +685,15 @@ func (m Model) statsLine() string {
 // numbers, the description and the top comments of the current song, as far
 // as they fit.
 func (m Model) statsLines(w, avail int) []string {
+	lines, _ := m.statsLinesN(w, avail)
+	return lines
+}
+
+// statsLinesN is statsLines and the number of comments it shows.
+func (m Model) statsLinesN(w, avail int) (lines []string, comments int) {
 	th := m.theme()
 	if m.currentID() == "" || avail <= 0 {
-		return nil
+		return nil, 0
 	}
 	var out []string
 	for _, l := range []string{m.bpmKeyLine(), m.statsLine()} {
@@ -691,7 +703,7 @@ func (m Model) statsLines(w, avail int) []string {
 	}
 	st := m.stats[m.currentID()]
 	if !st.hasInfo {
-		return out
+		return out, 0
 	}
 
 	// Description: about half of what is left, at most six lines.
@@ -704,31 +716,39 @@ func (m Model) statsLines(w, avail int) []string {
 		}
 	}
 
-	// Comments: a header, then as many (up to three, two lines each) as fit.
-	if room := avail - len(out); len(st.info.Comments) > 0 && room >= 3 {
-		out = append(out, "", bold.Render("Top comments"))
-		for i, c := range st.info.Comments {
-			room = avail - len(out)
-			if i == 3 || room <= 0 {
+	// Comments: a page of up to three, two lines each, as many as fit, from the one
+	// the user has paged to (:comments).
+	n := len(st.info.Comments)
+	if room := avail - len(out); n > 0 && room >= 3 {
+		off := min(st.commentsOff, n-1)
+		var body []string
+		for i := off; i < n && comments < commentsPage; i++ {
+			room = avail - len(out) - 2 - len(body) // the blank line and the header come first
+			if room <= 0 {
 				break
 			}
+			c := st.info.Comments[i]
 			prefix := ""
 			if c.Likes > 0 {
 				// ASCII on purpose: glyphs such as "♥" are drawn two cells
 				// wide by some terminals and would cover the count.
 				prefix = "(" + compact(c.Likes) + ") "
 			}
-			lines := wrapText(prefix+c.Text, w, min(2, room))
-			for j, l := range lines {
+			for j, l := range wrapText(prefix+c.Text, w, min(2, room)) {
 				if rest, ok := strings.CutPrefix(l, prefix); ok && j == 0 && prefix != "" {
-					out = append(out, th.accent.Render(prefix)+dim.Render(rest))
+					body = append(body, th.accent.Render(prefix)+dim.Render(rest))
 				} else {
-					out = append(out, dim.Render(l))
+					body = append(body, dim.Render(l))
 				}
 			}
+			comments++
+		}
+		if comments > 0 {
+			out = append(out, "", clip(m.commentsHeader(st, off, comments), w))
+			out = append(out, body...)
 		}
 	}
-	return out
+	return out, comments
 }
 
 // ---- popup ----

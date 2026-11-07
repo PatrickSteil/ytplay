@@ -400,8 +400,8 @@ func TestHelpListsTheNewKeys(t *testing.T) {
 func TestNewCommandNamesShortFormsAndPrefixes(t *testing.T) {
 	for word, want := range map[string]string{
 		"seek": "seek", "prev": "prev", "play": "play", "undo": "undo", "shuffle": "shuffle", "vol": "vol", "mute": "mute",
-		"p": "prev", "u": "undo", "v": "vol", "m": "mute",
-		"se": "seek", "pr": "prev", "pl": "play", "un": "undo", "shu": "shuffle", "vo": "vol", "mu": "mute",
+		"comments": "comments", "p": "prev", "u": "undo", "v": "vol", "m": "mute", "c": "comments",
+		"se": "seek", "pr": "prev", "pl": "play", "un": "undo", "shu": "shuffle", "vo": "vol", "mu": "mute", "co": "comments",
 	} {
 		if c, candidates := findCommand(word); c == nil || c.name != want {
 			t.Errorf("findCommand(%q) = %v %v, want %q", word, c, candidates, want)

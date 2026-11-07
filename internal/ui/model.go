@@ -78,8 +78,9 @@ type Deps struct {
 	// Publish is told what is playing whenever it changes (for MPRIS). It is
 	// called from Update, so it must return quickly and never block.
 	Publish func(NowPlaying)
-	// Info fetches description, stats and top comments of a video (nil: none).
-	Info func(ctx context.Context, id string) (yt.Info, error)
+	// Info fetches description, stats and the top comments of a video, as many
+	// comments as asked for (nil: none).
+	Info func(ctx context.Context, id string, comments int) (yt.Info, error)
 	// Analyze estimates tempo and key of a video of the given length in
 	// seconds (0 if unknown) (nil: none). level is how much is wanted: the
 	// playing song gets the cheap Light analysis until the DJ popup has been
@@ -109,10 +110,15 @@ type NowPlaying struct {
 
 // trackStats is what is known about one track beyond its search result.
 type trackStats struct {
-	info                   yt.Info
-	hasInfo, infoFailed    bool
-	res                    analyze.Result
-	hasRes, analysisFailed bool
+	info                yt.Info
+	hasInfo, infoFailed bool
+	// The comments are paged: commentsOff is the first one shown, commentsAsked
+	// how many the last fetch asked for (as many came back unless the video has
+	// no more), commentsBusy that more are being fetched.
+	commentsOff, commentsAsked int
+	commentsBusy               bool
+	res                        analyze.Result
+	hasRes, analysisFailed     bool
 }
 
 // playlistEntry is one element of mpv's observed "playlist" property.
@@ -350,10 +356,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			st.infoFailed = true
 		} else {
-			st.info, st.hasInfo = msg.info, true
+			st.info, st.hasInfo, st.commentsAsked = msg.info, true, firstComments
 		}
 		m.stats[msg.id] = st
 		return m, nil
+
+	case moreCommentsMsg:
+		return m.handleMoreComments(msg)
 
 	case analysisMsg:
 		delete(m.queueRunning, msg.id)
@@ -542,7 +551,7 @@ func (m *Model) fetchStats(id string) tea.Cmd {
 			if !wait() {
 				return infoMsg{id: id, err: context.Canceled}
 			}
-			info, err := fetch(ctx, id)
+			info, err := fetch(ctx, id, firstComments)
 			if ctx.Err() != nil {
 				err = context.Canceled
 			}

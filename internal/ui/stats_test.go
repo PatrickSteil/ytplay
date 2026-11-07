@@ -59,7 +59,7 @@ type statsFakes struct {
 func statsModel(f *statsFakes) Model {
 	m := New(Deps{
 		Player: &fakeActions{},
-		Info: func(ctx context.Context, id string) (yt.Info, error) {
+		Info: func(ctx context.Context, id string, _ int) (yt.Info, error) {
 			f.infoCalls.Add(1)
 			return yt.Info{Description: "desc of " + id}, nil
 		},
@@ -278,7 +278,7 @@ func TestQuitCancelsPendingLookups(t *testing.T) {
 	started := make(chan context.Context, 1)
 	m := New(Deps{
 		Player: &fakeActions{},
-		Info: func(ctx context.Context, id string) (yt.Info, error) {
+		Info: func(ctx context.Context, id string, _ int) (yt.Info, error) {
 			started <- ctx
 			<-ctx.Done() // a slow yt-dlp call
 			return yt.Info{}, ctx.Err()

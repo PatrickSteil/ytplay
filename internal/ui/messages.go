@@ -64,6 +64,14 @@ type radioDoneMsg struct {
 }
 
 // infoMsg is the result of fetching description, stats and comments.
+// moreCommentsMsg is the answer to a fetch of more comments of a song.
+type moreCommentsMsg struct {
+	id    string
+	info  yt.Info
+	asked int // how many comments were asked for
+	err   error
+}
+
 type infoMsg struct {
 	id   string
 	info yt.Info

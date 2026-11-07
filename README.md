@@ -65,6 +65,7 @@ the queue after Tab.
 | `:sort` | `:b` | in the DJ popup: sort the queue by BPM (slowest first, again: fastest first) |
 | `:bpm N` | `:e` | in the DJ popup: set the highlighted song's BPM by hand (`*`; kept until ytplay quits); `:bpm` alone goes back to the detected one |
 | `:radio N` | `:r` | add up to N songs similar to the queue (1 to 50, default 10) |
+| `:comments` | `:c` | the next comments of the playing song (three at a time, in the wide layout); when the ones fetched are used up it loads 20 more from YouTube, up to 100, and after the last one starts again at the first |
 | `:clear` | `:X` | clear the queue (asks first: `y` or `n`; the playing song keeps going) |
 | `:help` | `:h` | help popup (`j` `k` scroll on a small terminal) |
 | `:quit` | `:q` | quit |

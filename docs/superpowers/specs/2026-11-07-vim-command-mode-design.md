@@ -161,6 +161,13 @@ view.
 
 - `:radio N` (`:r N`): looks for up to N similar songs, 1 to 50, 10 without a number
   (it was a fixed 20).
+- `:comments` (`:c`): the comments of the playing song are shown a page of up to
+  three at a time ("Top comments 4–6 of 10+ · :comments for more"; the + says there
+  may be more on YouTube). `:comments` goes to the next page; when the fetched
+  ones are used up it asks yt-dlp for 20 more (up to 100) and shows the first new
+  one; after the last it starts again at the first. The page is what fits the
+  panel, so none is skipped. A failed fetch keeps what is there. Comments are only
+  in the wide layout.
 - The hints at the bottom right are per state (nothing playing, playing, results,
   queue, search bar, DJ popup, help, the questions, the download popup). A test
   uses every hint in its state and checks that it changes something and that the
