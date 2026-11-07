@@ -45,7 +45,7 @@ var commands = []command{
 	{name: "undo", short: []string{"u"}, run: cmdUndo, inPopup: true, usage: ":undo", about: "undo the last queue change (also the key u)"},
 	{name: "shuffle", run: cmdShuffle, inPopup: true, usage: ":shuffle", about: "shuffle the queue"},
 	{name: "download", short: []string{"d"}, run: cmdDownload, usage: ":download", about: "save the highlighted song to a file"},
-	{name: "radio", short: []string{"r"}, run: cmdRadio, usage: ":radio", about: "add 20 songs similar to the queue"},
+	{name: "radio", short: []string{"r"}, run: cmdRadio, usage: ":radio N", about: "add up to N (default 10) songs similar to the queue"},
 	{name: "clear", short: []string{"X"}, run: cmdClear, usage: ":clear", about: "clear the queue (asks first)"},
 	{name: "auto", short: []string{"a"}, run: cmdAuto, inPopup: true, usage: ":auto", about: "autodj on or off (the next song mixes in early)"},
 	{name: "dj", run: cmdDJ, inPopup: true, usage: ":dj", about: "the DJ popup: the queue with its BPM"},
@@ -315,7 +315,17 @@ func cmdBPM(m Model, arg string) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-func cmdRadio(m Model, _ string) (Model, tea.Cmd) { return m.startRadio() }
+func cmdRadio(m Model, arg string) (Model, tea.Cmd) {
+	n := radioDefault
+	if arg = strings.TrimSpace(arg); arg != "" {
+		var err error
+		if n, err = strconv.Atoi(arg); err != nil || strings.Trim(arg, "0123456789") != "" || n < 1 || n > radioMax {
+			status := m.setStatus(fmt.Sprintf("Radio takes a number of songs from 1 to %d (default %d)", radioMax, radioDefault), true)
+			return m, status
+		}
+	}
+	return m.startRadio(n)
+}
 
 func cmdClear(m Model, _ string) (Model, tea.Cmd) { return m.askClear() }
 

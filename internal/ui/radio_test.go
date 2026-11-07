@@ -89,7 +89,7 @@ func TestRadioNeedsSomethingPlaying(t *testing.T) {
 	}
 }
 
-func TestRadioRequestsTwentySimilarExcludingEverythingInThePlaylist(t *testing.T) {
+func TestRadioRequestsTenSimilarByDefaultExcludingEverythingInThePlaylist(t *testing.T) {
 	var calls []similarCall
 	m := radioModel(t, &calls, songs(3), nil)
 	m, cmd := typeCommand(m, "radio")
@@ -101,7 +101,7 @@ func TestRadioRequestsTwentySimilarExcludingEverythingInThePlaylist(t *testing.T
 		t.Fatalf("done=%v calls=%d", done, len(calls))
 	}
 	c := calls[0]
-	if !reflect.DeepEqual(c.seeds, []string{"c", "u1"}) || c.n != 20 {
+	if !reflect.DeepEqual(c.seeds, []string{"c", "u1"}) || c.n != 10 {
 		t.Errorf("seeds=%v n=%d", c.seeds, c.n)
 	}
 	for _, id := range []string{"p0", "c", "u0", "u1"} {
@@ -180,5 +180,31 @@ func TestRadioWorksFromResultsAndQueueModesButNotWhileTyping(t *testing.T) {
 	typing, _ = send(typing, "r")
 	if typing.input.Value() != "r" || typing.radioBusy {
 		t.Errorf("r must be typed into the search bar: input=%q busy=%v", typing.input.Value(), typing.radioBusy)
+	}
+}
+
+// :radio takes how many songs to look for (at most 50); without a number it
+// looks for 10.
+func TestRadioCommandTakesTheNumberOfSongs(t *testing.T) {
+	for text, want := range map[string]int{
+		"radio": 10, "r": 10, "radio 5": 5, "r 7": 7, "ra 3": 3, "radio 1": 1, "radio 50": 50, "radio   12 ": 12,
+	} {
+		var calls []similarCall
+		m := radioModel(t, &calls, songs(2), nil)
+		_, cmd := typeCommand(m, text)
+		if findMsg[radioDoneMsg](cmd) == nil || len(calls) != 1 || calls[0].n != want {
+			t.Errorf(":%s asked for %v, want one request for %d", text, calls, want)
+		}
+	}
+}
+
+func TestRadioCommandRefusesABadNumber(t *testing.T) {
+	for _, text := range []string{"radio 0", "radio -3", "radio abc", "radio 51", "radio 2.5", "radio 1e1", "radio +4", "r 100"} {
+		var calls []similarCall
+		m := radioModel(t, &calls, songs(2), nil)
+		m, _ = typeCommand(m, text) // (the command it returns is only the status timer)
+		if len(calls) != 0 || !m.statusIsErr || !strings.Contains(m.status, "1 to 50") || m.radioBusy {
+			t.Errorf(":%s: calls %v status %q (error %v) busy %v, want an error that says 1 to 50 and no request", text, calls, m.status, m.statusIsErr, m.radioBusy)
+		}
 	}
 }

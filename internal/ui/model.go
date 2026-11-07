@@ -1350,8 +1350,12 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	}, m.setStatus(status, false))
 }
 
-// radioCount is how many similar songs :radio adds.
-const radioCount = 20
+// :radio looks for radioDefault similar songs unless told how many (at most
+// radioMax).
+const (
+	radioDefault = 10
+	radioMax     = 50
+)
 
 // radioSeeds picks up to three songs to find similar ones for: the current
 // one, plus one from the middle and the end of the upcoming queue, so the
@@ -1380,7 +1384,7 @@ func radioSeeds(pl []playlistEntry, pos int) []string {
 	return seeds
 }
 
-func (m Model) startRadio() (Model, tea.Cmd) {
+func (m Model) startRadio(n int) (Model, tea.Cmd) {
 	if m.deps.Similar == nil || m.radioBusy {
 		return m, nil
 	}
@@ -1399,7 +1403,7 @@ func (m Model) startRadio() (Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		res, err := similar(ctx, seeds, exclude, radioCount)
+		res, err := similar(ctx, seeds, exclude, n)
 		return radioDoneMsg{results: res, err: err}
 	}
 }

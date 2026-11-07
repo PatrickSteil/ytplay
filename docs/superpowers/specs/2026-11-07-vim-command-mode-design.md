@@ -157,6 +157,11 @@ inside the DJ popup. *My calls:* undo is a direct key because it is vim's, and
 vanish until Enter): `:sort`, `:bpm 128` and the rest are used with the popup in
 view.
 
+## Added after that
+
+- `:radio N` (`:r N`): looks for up to N similar songs, 1 to 50, 10 without a number
+  (it was a fixed 20).
+
 ## Not in this change
 
 Counts (`5j`: the digits seek), `gg`/`G`, `:h COMMAND`, a mode indicator.
