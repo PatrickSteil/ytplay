@@ -204,16 +204,16 @@ func TestShrinkingPlaylistClampsCursorAndLeavesWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestGlobalKeysStillWorkInQueueMode(t *testing.T) {
+func TestCommandsStillWorkInQueueMode(t *testing.T) {
 	m := queueModel(t, 3)
 	m, _ = send(m, "tab")
-	m, cmd := send(m, "s")
+	m, cmd := typeCommand(m, "skip")
 	m = run(m, cmd)
 	if lastCall(m) != "skip" {
 		t.Errorf("call = %q", lastCall(m))
 	}
-	if _, cmd := send(m, "Q"); !isQuit(cmd) {
-		t.Error("Q should quit from queue mode")
+	if _, cmd := typeCommand(m, "quit"); !isQuit(cmd) {
+		t.Error(":quit should quit from queue mode")
 	}
 }
 

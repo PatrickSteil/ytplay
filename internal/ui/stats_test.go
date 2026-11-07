@@ -63,7 +63,7 @@ func statsModel(f *statsFakes) Model {
 			f.infoCalls.Add(1)
 			return yt.Info{Description: "desc of " + id}, nil
 		},
-		Analyze: func(ctx context.Context, id string, duration float64) (analyze.Result, error) {
+		Analyze: func(ctx context.Context, id string, duration float64, _ analyze.Level) (analyze.Result, error) {
 			f.analysisCalls.Add(1)
 			f.lastDuration = duration
 			return analyze.Result{BPM: 116, Key: "F# minor", Camelot: "11A", KeyScore: .9}, nil
@@ -294,7 +294,7 @@ func TestQuitCancelsPendingLookups(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("lookup did not start")
 	}
-	_, quit := send(m, "Q")
+	_, quit := typeCommand(m, "quit")
 	if !isQuit(quit) {
 		t.Fatal("Q should quit")
 	}

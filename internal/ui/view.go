@@ -20,8 +20,8 @@ const (
 	minWidthForCover = 60
 	maxQueueRows     = 5 // current entry + queueWindow upcoming ones
 	queueWindow      = maxQueueRows - 1
-	helpText         = "/ search  ⏎ play  q queue  r radio  ⇥ edit  D dj  X clear  s skip  0-9 = seek  ␣ pause  Q quit"
-	queueHelpText    = "j/k select  ↑/↓ move  x remove  X clear  ⇥/esc back"
+	helpText         = ": command  / search  ⏎ play  ⇥ queue  x remove  ␣ pause  0-9 = seek  :help"
+	queueHelpText    = "j/k select  ↑/↓ move  x remove  ⇥/esc back  : command"
 
 	// From this width on the screen is split into three equally wide framed
 	// columns. A third of it must fit the cover plus frame and padding.
@@ -32,12 +32,35 @@ const (
 )
 
 var (
-	accent   = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
-	accentB  = accent.Bold(true)
 	dim      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	errStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	bold     = lipgloss.NewStyle().Bold(true)
 )
+
+// theme is the set of colours the screen is drawn in.
+type theme struct {
+	accent, accentB lipgloss.Style // highlights, the focused frame, the progress bar, popups
+	frame           lipgloss.Style // the frames and rules around what is not focused
+}
+
+func newTheme(accent, frame string) theme {
+	a := lipgloss.NewStyle().Foreground(lipgloss.Color(accent))
+	return theme{accent: a, accentB: a.Bold(true), frame: lipgloss.NewStyle().Foreground(lipgloss.Color(frame))}
+}
+
+var (
+	blueTheme  = newTheme("75", "245") // the normal colours
+	greenTheme = newTheme("78", "65")  // while autodj is on
+)
+
+// theme is the colours to draw in: green while autodj is on, so that it can be
+// seen at a glance that the DJ is at work.
+func (m Model) theme() theme {
+	if m.autoDJ {
+		return greenTheme
+	}
+	return blueTheme
+}
 
 // fit truncates s with "…" to w display columns and pads it with spaces to w.
 func fit(s string, w int) string {
@@ -95,7 +118,7 @@ func (m Model) help() string {
 	return helpText
 }
 
-func (m Model) rule() string { return dim.Render(strings.Repeat("─", max(m.width, 0))) }
+func (m Model) rule() string { return m.theme().frame.Render(strings.Repeat("─", max(m.width, 0))) }
 
 // renderTop is the now-playing panel.
 func (m Model) renderTop() []string {
@@ -165,12 +188,13 @@ func formatClock(sec float64) string {
 
 // progressLine is "▶ 01:23 / 03:52  ██████░░░░░░░░░░ 36%" (or "Loading…").
 func (m Model) progressLine() string {
+	th := m.theme()
 	icon := "▶"
 	if m.paused {
 		icon = "⏸"
 	}
 	if m.loading {
-		return accent.Render(icon) + " " + dim.Render("Loading…")
+		return th.accent.Render(icon) + " " + dim.Render("Loading…")
 	}
 	total := "--:--"
 	if m.total > 0 {
@@ -179,19 +203,19 @@ func (m Model) progressLine() string {
 	prefix := fmt.Sprintf("%s %s / %s  ", icon, formatClock(m.elapsed), total)
 	barW := min(m.textWidth()-lipgloss.Width(prefix)-5, 30)
 	if barW < 6 {
-		return accent.Render(prefix)
+		return th.accent.Render(prefix)
 	}
 	frac := 0.0
 	if m.total > 0 {
 		frac = min(max(m.elapsed/m.total, 0), 1)
 	}
 	filled := int(frac * float64(barW))
-	bar := accent.Render(strings.Repeat("█", filled)) + dim.Render(strings.Repeat("░", barW-filled))
+	bar := th.accent.Render(strings.Repeat("█", filled)) + dim.Render(strings.Repeat("░", barW-filled))
 	pct := ""
 	if m.total > 0 {
 		pct = fmt.Sprintf(" %d%%", int(frac*100+0.5))
 	}
-	return accent.Render(prefix) + bar + pct
+	return th.accent.Render(prefix) + bar + pct
 }
 
 // queueWindowSize is how many upcoming entries the queue shows at once.
@@ -211,6 +235,7 @@ func (m Model) queueWindowSize() int {
 // (modeQueue) the window follows the cursor; otherwise it starts at the first
 // upcoming entry. Already-played entries are not shown.
 func (m Model) queueRows(w int) []string {
+	th := m.theme()
 	cur := m.currentEntry()
 	if cur == nil {
 		return nil
@@ -222,7 +247,7 @@ func (m Model) queueRows(w int) []string {
 		title, _, dur := m.entryInfo(e)
 		return fit(safe(title), titleW) + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
 	}
-	lines := []string{accentB.Render("  ▶  ") + accent.Render(rowFor(*cur))}
+	lines := []string{th.accentB.Render("  ▶  ") + th.accent.Render(rowFor(*cur))}
 
 	win := m.queueWindowSize()
 	off := 0
@@ -232,7 +257,7 @@ func (m Model) queueRows(w int) []string {
 	end := min(off+win, len(upcoming))
 	for i := off; i < end; i++ {
 		if m.mode == modeQueue && i == m.queueCursor {
-			lines = append(lines, accentB.Render(fmt.Sprintf("> %d. ", i+1)+rowFor(upcoming[i])))
+			lines = append(lines, th.accentB.Render(fmt.Sprintf("> %d. ", i+1)+rowFor(upcoming[i])))
 		} else {
 			lines = append(lines, dim.Render(fmt.Sprintf("%3d. ", i+1))+rowFor(upcoming[i]))
 		}
@@ -260,6 +285,9 @@ func (m Model) renderBottom() []string {
 }
 
 func (m Model) statusLine() string {
+	if m.mode == modeCommand { // the command line takes the place of the status
+		return clip(m.cmdInput.View(), m.width)
+	}
 	style := dim
 	if m.statusIsErr {
 		style = errStyle
@@ -305,6 +333,7 @@ func (m Model) renderResults(vis int) []string {
 // resultRow renders one result for a panel w columns wide. The selection
 // marker is dimmed when the list is not focused.
 func (m Model) resultRow(w, i int, r yt.Result, focused bool) string {
+	th := m.theme()
 	const durW = 8
 	chanW := 0
 	if w >= 50 {
@@ -321,7 +350,7 @@ func (m Model) resultRow(w, i int, r yt.Result, focused bool) string {
 	}
 	switch {
 	case i == m.selected && focused:
-		return accentB.Render("> " + row)
+		return th.accentB.Render("> " + row)
 	case i == m.selected:
 		return dim.Render("> " + row)
 	}
@@ -408,10 +437,10 @@ func (m Model) inputWidth() int {
 }
 
 // box frames body with a titled border exactly innerW x innerH inside.
-func box(title string, body []string, innerW, innerH int, focused bool) []string {
-	border := dim
+func box(th theme, title string, body []string, innerW, innerH int, focused bool) []string {
+	border := th.frame
 	if focused {
-		border = accent
+		border = th.accent
 	}
 	t := " " + clip(title, max(innerW-2, 0)) + " "
 	top := border.Render("┌") + bold.Render(t) +
@@ -477,9 +506,9 @@ func (m Model) viewWide() string {
 	if len(queueBody) == 0 {
 		queueBody = []string{dim.Render("Nothing queued")}
 	}
-	left := box("Now playing", m.leftBody(innerH), lw-2, innerH, false)
-	queue := box(m.queueTitle(), queueBody, qw-2, innerH, m.mode == modeQueue)
-	search := box("Search", m.searchBody(sw-3, innerH), sw-2, innerH, m.mode == modeSearch || m.mode == modeResults)
+	left := box(m.theme(), "Now playing", m.leftBody(innerH), lw-2, innerH, false)
+	queue := box(m.theme(), m.queueTitle(), queueBody, qw-2, innerH, m.mode == modeQueue)
+	search := box(m.theme(), "Search", m.searchBody(sw-3, innerH), sw-2, innerH, m.mode == modeSearch || m.mode == modeResults)
 
 	lines := make([]string, 0, m.height)
 	for i := range left {
@@ -560,6 +589,7 @@ func wrapText(text string, w, maxLines int) []string {
 // bpmKeyLine is "116 BPM · F# minor · 11A", a placeholder while the audio is
 // being analysed, or "" if there is nothing (to show).
 func (m Model) bpmKeyLine() string {
+	th := m.theme()
 	id := m.currentID()
 	st := m.stats[id]
 	bpm := m.tempoOf(id)
@@ -582,7 +612,7 @@ func (m Model) bpmKeyLine() string {
 			parts = append(parts, st.res.Camelot)
 		}
 	}
-	return accent.Render(strings.Join(parts, " · "))
+	return th.accent.Render(strings.Join(parts, " · "))
 }
 
 // statsLine is "1.2M views · 8.9K likes · 2013" (empty until known).
@@ -608,6 +638,7 @@ func (m Model) statsLine() string {
 // numbers, the description and the top comments of the current song, as far
 // as they fit.
 func (m Model) statsLines(w, avail int) []string {
+	th := m.theme()
 	if m.currentID() == "" || avail <= 0 {
 		return nil
 	}
@@ -649,7 +680,7 @@ func (m Model) statsLines(w, avail int) []string {
 			lines := wrapText(prefix+c.Text, w, min(2, room))
 			for j, l := range lines {
 				if rest, ok := strings.CutPrefix(l, prefix); ok && j == 0 && prefix != "" {
-					out = append(out, accent.Render(prefix)+dim.Render(rest))
+					out = append(out, th.accent.Render(prefix)+dim.Render(rest))
 				} else {
 					out = append(out, dim.Render(l))
 				}
@@ -684,37 +715,39 @@ func overlay(lines, box []string, width, left, top int) []string {
 
 // confirmBox is the "clear the queue?" popup.
 func (m Model) confirmBox() []string {
+	th := m.theme()
 	n := len(m.upcoming())
 	songs := fmt.Sprintf("%d upcoming songs", n)
 	if n == 1 {
 		songs = "1 upcoming song"
 	}
 	w := max(min(46, m.width)-2, 0) // inner width
-	row := func(s string) string { return accent.Render("│") + fit(" "+s, w) + accent.Render("│") }
+	row := func(s string) string { return th.accent.Render("│") + fit(" "+s, w) + th.accent.Render("│") }
 	title := " Clear the queue? "
 	return []string{
-		accent.Render("┌") + bold.Render(clip(title, w)) + accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐"),
+		th.accent.Render("┌") + bold.Render(clip(title, w)) + th.accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐"),
 		row(""),
 		row("Remove all " + songs + "?"),
 		row(dim.Render("The playing song keeps going.")),
 		row(""),
-		row(accentB.Render("y yes") + "        " + dim.Render("n/esc no")),
-		accent.Render("└" + strings.Repeat("─", w) + "┘"),
+		row(th.accentB.Render("y yes") + "        " + dim.Render("n/esc no")),
+		th.accent.Render("└" + strings.Repeat("─", w) + "┘"),
 	}
 }
 
 // downloadBox is the "save to file" popup.
 func (m Model) downloadBox() []string {
+	th := m.theme()
 	w := max(min(64, m.width)-2, 0)
-	row := func(s string) string { return accent.Render("│") + fit(" "+s, w) + accent.Render("│") }
+	row := func(s string) string { return th.accent.Render("│") + fit(" "+s, w) + th.accent.Render("│") }
 	title := " Save to file "
 	lines := []string{
-		accent.Render("┌") + bold.Render(clip(title, w)) + accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐"),
+		th.accent.Render("┌") + bold.Render(clip(title, w)) + th.accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐"),
 		row(dim.Render(clip(safe(m.dlTrack.Title), w-2))),
 		row(m.dlInput.View()),
 	}
 	if m.dlWarn != "" {
-		lines = append(lines, row(accentB.Render(m.dlWarn)))
+		lines = append(lines, row(th.accentB.Render(m.dlWarn)))
 	}
 	for i, o := range m.dlOptions {
 		if i == 4 {
@@ -725,7 +758,7 @@ func (m Model) downloadBox() []string {
 	}
 	lines = append(lines,
 		row(dim.Render("tab complete   enter save   esc cancel")),
-		accent.Render("└"+strings.Repeat("─", w)+"┘"))
+		th.accent.Render("└"+strings.Repeat("─", w)+"┘"))
 	return lines
 }
 
@@ -746,10 +779,11 @@ func (m Model) djTempo(id string) string {
 
 // djBox is the DJ popup: the playing song and the queue with their tempo.
 func (m Model) djBox() []string {
+	th := m.theme()
 	w := max(min(76, m.width)-2, 0)
-	row := func(s string) string { return accent.Render("│") + fit(" "+s, w) + accent.Render("│") }
+	row := func(s string) string { return th.accent.Render("│") + fit(" "+s, w) + th.accent.Render("│") }
 	title := " DJ "
-	lines := []string{accent.Render("┌") + bold.Render(clip(title, w)) + accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐")}
+	lines := []string{th.accent.Render("┌") + bold.Render(clip(title, w)) + th.accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐")}
 
 	n := m.djRowCount()
 	if n == 0 {
@@ -770,59 +804,78 @@ func (m Model) djBox() []string {
 		text := fit(safe(name), titleW) + " " + m.djTempo(yt.VideoID(e.Filename))
 		switch {
 		case r == m.djCursor:
-			lines = append(lines, row(accentB.Render("> ")+accentB.Render(ansi.Strip(text))))
+			lines = append(lines, row(th.accentB.Render("> ")+th.accentB.Render(ansi.Strip(text))))
 		case r == 0:
-			lines = append(lines, row(accent.Render("▶ ")+text))
+			lines = append(lines, row(th.accent.Render("▶ ")+text))
 		default:
 			lines = append(lines, row("  "+text))
 		}
 	}
-	if m.djEditing {
-		lines = append(lines, row(m.djInput.View()))
-		if m.djWarn != "" {
-			lines = append(lines, row(accentB.Render(m.djWarn)))
-		} else {
-			lines = append(lines, row(dim.Render("enter set   esc cancel   empty: back to detected")))
-		}
-	} else {
-		lines = append(lines, row(dim.Render("j/k select   e set BPM   b sort by BPM   esc close")))
+	autoLine := dim.Render("autodj off · :auto switches it on")
+	if m.autoDJ {
+		autoLine = th.accent.Render("autodj on · " + m.nextTransition())
 	}
-	return append(lines, accent.Render("└"+strings.Repeat("─", w)+"┘"))
+	lines = append(lines, row(autoLine), row(dim.Render("j/k select   :sort by BPM   :bpm N set BPM   :auto   esc close")))
+	return append(lines, th.accent.Render("└"+strings.Repeat("─", w)+"┘"))
 }
 
-// helpBox is the help popup.
-func (m Model) helpBox() []string {
-	w := max(min(70, m.width)-2, 0)
-	row := func(s string) string { return accent.Render("│") + fit(" "+s, w) + accent.Render("│") }
-	key := func(k, d string) string { return accentB.Render(fmt.Sprintf("%-10s", k)) + d }
-	title := " ytplay help "
-	body := []string{
+// helpRows are all rows of the help popup: the keys that need no colon, then
+// every command (from the table the command line runs, so none is left out).
+func (m Model) helpRows() []string {
+	th := m.theme()
+	key := func(k, d string) string { return th.accentB.Render(fmt.Sprintf("%-10s", k)) + d }
+	rows := []string{
 		"ytplay by Patrick Steil",
 		dim.Render("A simple CLI wrapper to just play music: mpv plays the"),
 		dim.Render("audio, yt-dlp searches and downloads."),
 		"",
-		key("/", "search (Enter runs it, Esc closes the bar)"),
-		key("j / k", "move in results or queue"),
-		key("Enter", "play the selected result now"),
-		key("q", "add the selected result to the queue"),
-		key("d", "save a song to a file (Tab completes the path)"),
-		key("r", "add 20 songs similar to the queue"),
-		key("Tab", "edit queue: j/k select, ↑/↓ move, x remove"),
-		key("D", "DJ popup: BPM of the queue, sort by BPM, set a BPM"),
-		key("X", "clear the queue (asks first)"),
-		key("s", "skip"),
+		bold.Render("Keys"),
+		key("/", "search bar (Enter runs it, Esc closes it)"),
+		key("j / k", "move in the results, the queue and the DJ popup"),
+		key("Enter", "play the highlighted result now"),
+		key("Tab", "switch between the results and the queue"),
+		key("x", "remove the highlighted queue entry"),
+		key("↑ / ↓", "move the highlighted queue entry"),
 		key("Space", "pause / resume"),
 		key("0-9, =", "seek to 0%-90%, 100%"),
-		key("h", "this help"),
-		key("Q, Ctrl+C", "quit"),
+		key("Ctrl+C", "quit"),
+		key("Esc", "back out of whatever is open"),
+		key(":", "the command line: Enter runs it, Esc cancels,"),
+		key("", "Up/Down earlier commands, Tab completes a name"),
 		"",
-		dim.Render("h / esc closes this window"),
+		bold.Render("Commands") + dim.Render("  (a short form, or the start of the name, works too)"),
 	}
-	lines := []string{accent.Render("┌") + bold.Render(clip(title, w)) + accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐")}
-	for _, b := range body[:min(len(body), max(m.height-4, 0))] {
-		lines = append(lines, row(b))
+	for _, c := range commands {
+		label := c.usage
+		if len(c.short) > 0 {
+			label += "  :" + c.short[0]
+		}
+		rows = append(rows, th.accentB.Render(fmt.Sprintf("%-17s", label))+c.about)
 	}
-	return append(lines, accent.Render("└"+strings.Repeat("─", w)+"┘"))
+	return rows
+}
+
+// helpWindow is how many rows of help fit on this terminal.
+func (m Model) helpWindow() int { return max(m.height-5, 3) } // borders, the closing hint, a margin
+
+// helpBox is the help popup. On a small terminal it scrolls with j and k.
+func (m Model) helpBox() []string {
+	th := m.theme()
+	w := max(min(70, m.width)-2, 0)
+	row := func(s string) string { return th.accent.Render("│") + fit(" "+s, w) + th.accent.Render("│") }
+	title := " ytplay help "
+	rows, win := m.helpRows(), m.helpWindow()
+	off, hint := 0, "Esc closes this window"
+	if len(rows) > win {
+		off = max(min(m.helpOff, len(rows)-win), 0)
+		hint = "j/k scroll   Esc closes this window"
+	}
+	lines := []string{th.accent.Render("┌") + bold.Render(clip(title, w)) + th.accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐")}
+	for _, r := range rows[off:min(off+win, len(rows))] {
+		lines = append(lines, row(r))
+	}
+	lines = append(lines, row(dim.Render(hint)))
+	return append(lines, th.accent.Render("└"+strings.Repeat("─", w)+"┘"))
 }
 
 func (m Model) withPopup(view string) string {

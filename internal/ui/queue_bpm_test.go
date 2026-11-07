@@ -23,7 +23,7 @@ type bpmFakes struct {
 	bpm  map[string]float64
 }
 
-func (f *bpmFakes) analyze(ctx context.Context, id string, duration float64) (analyze.Result, error) {
+func (f *bpmFakes) analyze(ctx context.Context, id string, duration float64, _ analyze.Level) (analyze.Result, error) {
 	f.mu.Lock()
 	f.ids = append(f.ids, id)
 	fail, bpm := f.fail[id], f.bpm[id]
@@ -78,7 +78,7 @@ func bpmDeliver(t *testing.T, m Model, msgs []tea.Msg, id string) (Model, tea.Cm
 // openDJ presses D and returns what that started.
 func openDJ(t *testing.T, m Model) (Model, tea.Cmd) {
 	t.Helper()
-	m, cmd := send(m, "D")
+	m, cmd := typeCommand(m, "dj")
 	if m.mode != modeDJ {
 		t.Fatalf("mode = %v after D, want the DJ popup", m.mode)
 	}
@@ -97,25 +97,20 @@ func TestQueuedSongsAreNotAnalysedUntilTheDJPopupIsOpened(t *testing.T) {
 	}
 }
 
-func TestQueuedSongsAreAnalysedTwoAtATime(t *testing.T) {
+func TestQueuedSongsAreAnalysedFourAtATime(t *testing.T) {
 	f := &bpmFakes{}
 	m := bpmModel(f)
-	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c", "d", "e")
+	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c", "d", "e", "f")
 	msgs := collect(cmd)
 	m, cmd = openDJ(t, m)
 	msgs = append(msgs, collect(cmd)...)
-	if got := f.asked(); !slices.Equal(got, []string{"a", "b", "c"}) { // the playing song, then two queued
-		t.Fatalf("analysed %v, want the playing song and the next two", got)
+	if got := f.asked(); !slices.Equal(got, []string{"a", "b", "c", "d", "e"}) { // the playing song, then four queued
+		t.Fatalf("analysed %v, want the playing song and the next four", got)
 	}
 	m, cmd = bpmDeliver(t, m, msgs, "b")
-	msgs = append(msgs, collect(cmd)...)
-	if got := f.asked(); !slices.Equal(got, []string{"a", "b", "c", "d"}) {
-		t.Fatalf("after one finished, analysed %v, want d to have started", got)
-	}
-	m, cmd = bpmDeliver(t, m, msgs, "c")
 	collect(cmd)
-	if got := f.asked(); !slices.Equal(got, []string{"a", "b", "c", "d", "e"}) {
-		t.Errorf("analysed %v, want e to have started", got)
+	if got := f.asked(); !slices.Equal(got, []string{"a", "b", "c", "d", "e", "f"}) {
+		t.Errorf("after one finished, analysed %v, want f to have started", got)
 	}
 }
 
@@ -190,14 +185,14 @@ func TestQueuedAnalysisWithoutAnalyzerDoesNothing(t *testing.T) {
 	m.statsDelay = 0
 	m, cmd := bpmPlaying(t, m, 0, "a", "b")
 	collect(cmd)
-	_, cmd = send(m, "D")
+	_, cmd = typeCommand(m, "dj")
 	collect(cmd) // must not panic
 }
 
 func TestQuittingCancelsQueuedAnalyses(t *testing.T) {
 	started := make(chan struct{}, 4)
 	cancelled := make(chan struct{}, 4)
-	m := New(Deps{Player: &fakeActions{}, Analyze: func(ctx context.Context, id string, d float64) (analyze.Result, error) {
+	m := New(Deps{Player: &fakeActions{}, Analyze: func(ctx context.Context, id string, d float64, _ analyze.Level) (analyze.Result, error) {
 		started <- struct{}{}
 		<-ctx.Done()
 		cancelled <- struct{}{}
@@ -206,7 +201,7 @@ func TestQuittingCancelsQueuedAnalyses(t *testing.T) {
 	m.statsDelay = 0
 	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c")
 	go collect(cmd)
-	m, cmd = send(m, "D")
+	m, cmd = typeCommand(m, "dj")
 	go collect(cmd)
 	for i := 0; i < 3; i++ { // the playing song and two queued
 		select {

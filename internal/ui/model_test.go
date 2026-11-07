@@ -118,13 +118,14 @@ func TestCtrlCQuitsEverywhere(t *testing.T) {
 	}
 }
 
-func TestCapitalQQuitsInNormalAndResults(t *testing.T) {
-	m := newTestModel()
-	if _, cmd := send(m, "Q"); !isQuit(cmd) {
-		t.Error("Q should quit in normal mode")
-	}
-	if _, cmd := send(withResults(t, 2), "Q"); !isQuit(cmd) {
-		t.Error("Q should quit in results mode")
+func TestQuitCommandQuitsFromEveryState(t *testing.T) {
+	q, _ := send(queueModel(t, 3), "tab")
+	for name, m := range map[string]Model{"normal": newTestModel(), "results": withResults(t, 2), "queue": q} {
+		for _, word := range []string{"quit", "q"} {
+			if _, cmd := typeCommand(m, word); !isQuit(cmd) {
+				t.Errorf(":%s should quit in %s mode", word, name)
+			}
+		}
 	}
 }
 

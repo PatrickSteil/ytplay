@@ -1,38 +1,32 @@
 package ui
 
-// All key bindings live here so they are easy to change. The values are
-// Bubble Tea key strings (tea.KeyMsg.String()).
+// The keys that need no colon. Everything else is a command (see commands.go).
+// The values are Bubble Tea key strings (tea.KeyMsg.String()).
 const (
-	keySearch  = "/"
+	keySearch  = "/" // the search bar, as ":find" without a name
+	keyCommand = ":" // the command line
 	keyEnter   = "enter"
 	keyEsc     = "esc"
-	keyQueue   = "q"
-	keySkip    = "s"
 	keyPause   = " "
-	keyQuit    = "Q"
 	keyCtrlC   = "ctrl+c"
 	keyDown    = "j"
 	keyUp      = "k"
 	keySeekEnd = "=" // Shift+0 on a German keyboard
 
-	keyDownload   = "d"   // save a song to a file (popup asks where)
-	keyComplete   = "tab" // complete the path in the download popup
-	keyHelp       = "h"   // help popup
-	keyRadio      = "r"   // add songs similar to the queue
-	keyClearQueue = "X"   // clear the queue (asks first)
-	keyConfirm    = "y"   // confirm in the popup
-	keyDeny       = "n"   // decline in the popup (Esc too)
+	keyComplete = "tab" // completes the path in the download popup and a command name in the command line
+	keyConfirm  = "y"   // confirm in the yes/no popup
+	keyDeny     = "n"   // decline in the yes/no popup (Esc too)
 
 	// Queue editing (modeQueue).
 	keyQueueFocus = "tab"  // focus / leave the queue panel
-	keyRemove     = "x"    // remove the selected queue entry
+	keyRemove     = "x"    // remove the selected queue entry (like :delete)
 	keyShiftUp    = "up"   // move the selected entry up
 	keyShiftDown  = "down" // move the selected entry down
 
-	// The DJ popup: the queue's tempo, sorting by it, setting it by hand.
-	keyDJ       = "D" // open (and close) the popup
-	keyDJSort   = "b" // sort the queue by tempo, slowest first; again: fastest first
-	keyDJSetBPM = "e" // set the selected song's BPM by hand
+	// The command line itself.
+	keyBackspace = "backspace"
+	keyArrowUp   = "up"   // an earlier command
+	keyArrowDown = "down" // a later command
 )
 
 // seekPercentForKey maps "0".."9" to 0..90 and keySeekEnd to 100.

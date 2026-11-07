@@ -38,7 +38,7 @@ func TestDownloadPopup(t *testing.T) {
 		gotID, gotPath = id, path
 		return nil
 	}
-	m, _ = send(m, "d")
+	m, _ = typeCommand(m, "download")
 	if m.mode != modeDownload {
 		t.Fatalf("mode = %v, want download", m.mode)
 	}
@@ -60,13 +60,14 @@ func TestDownloadPopup(t *testing.T) {
 func TestDownloadPopupEscAndOverwrite(t *testing.T) {
 	m := withResults(t, 1)
 	m.deps.Download = func(context.Context, string, string) error { return nil }
-	m, _ = send(m, "d", "esc")
+	m, _ = typeCommand(m, "download")
+	m, _ = send(m, "esc")
 	if m.mode != modeResults {
 		t.Errorf("esc: mode = %v", m.mode)
 	}
 	f := filepath.Join(t.TempDir(), "a.mp3")
 	os.WriteFile(f, nil, 0o644)
-	m, _ = send(m, "d")
+	m, _ = typeCommand(m, "download")
 	m.dlInput.SetValue(f)
 	m, cmd := send(m, "enter")
 	if m.mode != modeDownload || cmd != nil || m.dlWarn == "" {
@@ -80,11 +81,11 @@ func TestDownloadPopupEscAndOverwrite(t *testing.T) {
 
 func TestHelpPopup(t *testing.T) {
 	m := withResults(t, 1)
-	m, _ = send(m, "h")
+	m, _ = typeCommand(m, "help")
 	if m.mode != modeHelp || !strings.Contains(m.View(), "Patrick Steil") {
 		t.Fatalf("help not shown, mode=%v", m.mode)
 	}
-	m, _ = send(m, "j", "h")
+	m, _ = send(m, "j", "esc") // j is ignored in the help, Esc closes it
 	if m.mode != modeResults {
 		t.Errorf("mode = %v, want results", m.mode)
 	}

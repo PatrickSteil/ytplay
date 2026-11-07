@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/PatrickSteil/ytplay/internal/analyze"
+	"github.com/PatrickSteil/ytplay/internal/autodj"
 	"github.com/PatrickSteil/ytplay/internal/mpv"
 	"github.com/PatrickSteil/ytplay/internal/yt"
 )
@@ -32,6 +33,7 @@ const (
 	modeDownload             // "save to file" popup
 	modeHelp                 // help popup
 	modeDJ                   // DJ popup: queue tempo, sort by BPM, set a BPM
+	modeCommand              // the command line (":") is open
 )
 
 // Actions is what the UI needs from the player (implemented by
@@ -67,8 +69,14 @@ type Deps struct {
 	// Info fetches description, stats and top comments of a video (nil: none).
 	Info func(ctx context.Context, id string) (yt.Info, error)
 	// Analyze estimates tempo and key of a video of the given length in
-	// seconds (0 if unknown) (nil: none).
-	Analyze func(ctx context.Context, id string, duration float64) (analyze.Result, error)
+	// seconds (0 if unknown) (nil: none). level is how much is wanted: the
+	// playing song gets the cheap Light analysis until the DJ popup has been
+	// opened, every song the full one (with beat grids) after that.
+	Analyze func(ctx context.Context, id string, duration float64, level analyze.Level) (analyze.Result, error)
+	// SetAutoDJ switches the automatic transitions on or off. songs looks up what
+	// the analyses found out about a song by its URL; it may be called from any
+	// goroutine (nil: the player cannot do autodj).
+	SetAutoDJ func(on bool, songs func(url string) (autodj.Song, bool))
 	// Download saves the audio of a video to a file (nil: no downloads).
 	Download func(ctx context.Context, id, path string) error
 	// Cover returns the rendered cover for a video ID (nil: no covers).
@@ -127,6 +135,7 @@ type Model struct {
 	stats          map[string]trackStats
 	infoAsked      map[string]bool // lookups already started: never repeated unless cancelled
 	analysisAsked  map[string]bool
+	fullAsked      map[string]bool // songs a full analysis was started for (the DJ features need it)
 	// Songs further down the queue are analysed in the background, a few at a
 	// time, so their tempo is known by the time it is wanted (to sort by it).
 	queueRunning map[string]bool // analyses started for queued songs and not finished
@@ -147,16 +156,25 @@ type Model struct {
 
 	// DJ popup. Everything about tempo beyond the playing song's own BPM line
 	// lives here, and queued songs are only analysed once it has been opened.
-	djFrom    mode // where the popup returns to
-	djActive  bool // the popup was opened once: queued songs are analysed from now on
-	djCursor  int  // 0 is the playing song, 1.. the upcoming ones
-	djOff     int  // first visible row
-	djEditing bool // typing a BPM for the selected song
-	djInput   textinput.Model
-	djWarn    string
+	djFrom   mode // where the popup returns to
+	djActive bool // the popup was opened once: queued songs are analysed from now on
+	djCursor int  // 0 is the playing song, 1.. the upcoming ones
+	djOff    int  // first visible row
+	// The command line: where it was opened from (and goes back to), what was run
+	// before in this session, and where in that history Up and Down are.
+	cmdInput   textinput.Model
+	cmdFrom    mode
+	cmdHistory []string
+	cmdHistPos int
+	cmdDraft   string
+	helpOff    int // how far the help popup is scrolled
 	// bpmSet is the BPM the user set by hand, by video ID. It wins over the
 	// detected one and lasts until ytplay quits.
 	bpmSet map[string]float64
+	// autoDJ is whether the next song starts under the end of the playing one;
+	// songs is what the player may look up about analysed songs for that.
+	autoDJ bool
+	songs  *analysisStore
 
 	// Download popup.
 	helpFrom mode // where the help popup returns to
@@ -191,16 +209,16 @@ func New(d Deps) Model {
 	di := textinput.New()
 	di.Prompt = "> "
 	di.CharLimit = 512
-	bi := textinput.New()
-	bi.Prompt = "BPM: "
-	bi.CharLimit = 6
+	ci := textinput.New()
+	ci.Prompt = ":"
+	ci.CharLimit = 200
 	queueCtx, queueCancel := context.WithCancel(context.Background())
 	return Model{
-		deps: d, input: ti, dlInput: di, djInput: bi, bpmSet: map[string]float64{}, width: 80, height: 24,
+		deps: d, input: ti, dlInput: di, cmdInput: ci, bpmSet: map[string]float64{}, songs: newAnalysisStore(), width: 80, height: 24,
 		queueRunning: map[string]bool{}, queueCtx: queueCtx, queueCancel: queueCancel,
 		tracks: map[string]yt.Result{}, pos: -1, idle: true,
 		covers: map[string]string{}, coverAsked: map[string]bool{},
-		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{},
+		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{}, fullAsked: map[string]bool{},
 		statsDelay: statsDelay,
 	}
 }
@@ -323,6 +341,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delete(m.queueRunning, msg.id)
 		if errors.Is(msg.err, context.Canceled) {
 			delete(m.analysisAsked, msg.id)
+			delete(m.fullAsked, msg.id)
 			return m, nil
 		}
 		st := m.stats[msg.id]
@@ -330,6 +349,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			st.analysisFailed = true
 		} else {
 			st.res, st.hasRes = msg.res, true
+			m.songs.put(msg.id, autodj.Song{Length: m.tracks[msg.id].Duration, Edges: msg.res.Edges})
 		}
 		m.stats[msg.id] = st
 		return m, m.startQueuedAnalyses() // a slot is free
@@ -410,31 +430,55 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 	return m, queued
 }
 
-// queueAnalysisWorkers is how many queued songs are analysed at the same time
-// (not counting the playing song, which has its own lookup).
-const queueAnalysisWorkers = 2
+// queueAnalysisWorkers is how many songs are analysed completely at the same
+// time once the DJ popup was opened: queued ones, and the playing one if it still
+// needs upgrading. Memory is what limits it: a song's audio takes up to 100 MB
+// while it is being fetched and analysed.
+const queueAnalysisWorkers = 4
 
-// startQueuedAnalyses starts the analysis of upcoming songs that have not been
-// asked about yet, nearest first, while fewer than queueAnalysisWorkers run.
-// A song is asked about once: a failure is not retried.
+// needsFull says whether the DJ features still need a full analysis of song id:
+// it was never asked about, or only analysed lightly. A failed analysis is not
+// retried (a song asked about with no result has nothing to upgrade, and a failed
+// full one has fullAsked set), and one still running is waited for: its result
+// arrives, and if it is a light one this is asked again.
+func (m *Model) needsFull(id string) bool {
+	st := m.stats[id]
+	switch {
+	case m.fullAsked[id]:
+		return false
+	case !m.analysisAsked[id]:
+		return true
+	case st.hasRes:
+		return st.res.Level == analyze.Light
+	}
+	return false
+}
+
+// startQueuedAnalyses starts the full analysis of the playing song (if it only
+// has a light one) and of upcoming songs, nearest first, while fewer than
+// queueAnalysisWorkers run. A song is asked about once: a failure is not retried.
 func (m *Model) startQueuedAnalyses() tea.Cmd {
 	if m.deps.Analyze == nil || !m.djActive {
-		return nil // queued songs are only analysed for the DJ popup
+		return nil // beat grids and queued songs are only analysed for the DJ popup
+	}
+	wanted := m.upcoming()
+	if cur := m.currentEntry(); cur != nil {
+		wanted = append([]playlistEntry{*cur}, wanted...)
 	}
 	var cmds []tea.Cmd
-	for _, e := range m.upcoming() {
+	for _, e := range wanted {
 		if len(m.queueRunning) >= queueAnalysisWorkers {
 			break
 		}
 		id := yt.VideoID(e.Filename)
-		if id == "" || m.analysisAsked[id] {
+		if id == "" || !m.needsFull(id) {
 			continue
 		}
-		m.analysisAsked[id] = true
+		m.analysisAsked[id], m.fullAsked[id] = true, true
 		m.queueRunning[id] = true
 		analyse, duration, ctx := m.deps.Analyze, m.tracks[id].Duration, m.queueCtx
 		cmds = append(cmds, func() tea.Msg {
-			res, err := analyse(ctx, id, duration)
+			res, err := analyse(ctx, id, duration, analyze.Full)
 			if ctx.Err() != nil {
 				err = context.Canceled
 			}
@@ -488,12 +532,17 @@ func (m *Model) fetchStats(id string) tea.Cmd {
 	}
 	if wantAnalysis {
 		m.analysisAsked[id] = true
+		level := analyze.Light // all the header shows is tempo and key
+		if m.djActive {
+			level = analyze.Full
+			m.fullAsked[id] = true
+		}
 		analyse, duration := m.deps.Analyze, m.tracks[id].Duration
 		cmds = append(cmds, func() tea.Msg {
 			if !wait() {
 				return analysisMsg{id: id, err: context.Canceled}
 			}
-			res, err := analyse(ctx, id, duration)
+			res, err := analyse(ctx, id, duration, level)
 			if ctx.Err() != nil {
 				err = context.Canceled
 			}
@@ -567,12 +616,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleConfirmKey(k)
 	}
 	if m.mode == modeHelp {
+		maxOff := max(len(m.helpRows())-m.helpWindow(), 0)
 		switch k {
-		case keyEsc, keyHelp, keyEnter, keyQueue, keyQuit:
+		case keyEsc, keyEnter:
 			m.mode = m.helpFrom
 			m.clampQueue()
+		case keyDown, keyShiftDown:
+			m.helpOff = min(m.helpOff+1, maxOff)
+		case keyUp, keyShiftUp:
+			m.helpOff = max(m.helpOff-1, 0)
 		}
 		return m, nil
+	}
+	if m.mode == modeCommand {
+		return m.handleCommandKey(msg)
+	}
+	if k == keyCommand && m.commandAllowed() {
+		return m.openCommandLine()
 	}
 	if m.mode == modeDJ {
 		return m.handleDJKey(msg)
@@ -704,59 +764,58 @@ func (m Model) handleResultsKey(k string) (Model, tea.Cmd, bool) {
 			m.action(false, func(ctx context.Context) error { return p.PlayNow(ctx, url) }),
 			m.setStatus("Playing: "+r.Title, false),
 		), true
-	case keyQueue:
-		if len(m.results) == 0 {
-			return m, nil, true
-		}
-		r := m.results[m.selected]
-		m.tracks[r.ID] = r
-		url, p := r.URL(), m.deps.Player
-		return m, tea.Batch(
-			m.action(false, func(ctx context.Context) error { return p.Queue(ctx, url) }),
-			m.setStatus("Queued: "+r.Title, false),
-		), true
 	case keyEsc:
 		m.mode = modeNormal
 		return m, nil, true
-	case keyDownload:
-		if len(m.results) == 0 {
-			return m, nil, true
-		}
-		next, cmd := m.openDownload(m.results[m.selected])
-		return next, cmd, true
 	}
 	return m, nil, false
+}
+
+// openSearch focuses the search bar, with the last query in it.
+func (m Model) openSearch() (Model, tea.Cmd) {
+	m.mode = modeSearch
+	m.input.SetValue(m.query)
+	m.input.CursorEnd()
+	m.replaceOnType = m.query != ""
+	focus := m.input.Focus()
+	return m, focus
+}
+
+// queueSelected appends the selected result to the queue. There must be one.
+func (m Model) queueSelected() (Model, tea.Cmd) {
+	r := m.results[m.selected]
+	m.tracks[r.ID] = r
+	url, p := r.URL(), m.deps.Player
+	return m, tea.Batch(
+		m.action(false, func(ctx context.Context) error { return p.Queue(ctx, url) }),
+		m.setStatus("Queued: "+r.Title, false),
+	)
+}
+
+// downloadPlaying opens the save-to-file popup for the playing song.
+func (m Model) downloadPlaying() (Model, tea.Cmd) {
+	e := m.currentEntry()
+	if e == nil {
+		return m, m.setStatus("Nothing is playing", false)
+	}
+	title, channel, dur := m.entryInfo(*e)
+	id := yt.VideoID(e.Filename)
+	return m.openDownload(yt.Result{ID: id, Title: title, Channel: channel, Duration: dur})
+}
+
+// askClear asks whether to clear the queue.
+func (m Model) askClear() (Model, tea.Cmd) {
+	if len(m.upcoming()) == 0 {
+		return m, m.setStatus("Queue is empty", false)
+	}
+	m.confirmFrom, m.mode = m.mode, modeConfirm
+	return m, nil
 }
 
 func (m Model) handleGlobalKey(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case keySearch:
-		m.mode = modeSearch
-		m.input.SetValue(m.query)
-		m.input.CursorEnd()
-		m.replaceOnType = m.query != ""
-		return m, m.input.Focus()
-	case keyHelp:
-		m.helpFrom, m.mode = m.mode, modeHelp
-		return m, nil
-	case keyDJ:
-		return m.openDJ()
-	case keyDownload:
-		e := m.currentEntry()
-		if e == nil {
-			return m, m.setStatus("Nothing is playing", false)
-		}
-		title, channel, dur := m.entryInfo(*e)
-		id := yt.VideoID(e.Filename)
-		return m.openDownload(yt.Result{ID: id, Title: title, Channel: channel, Duration: dur})
-	case keyRadio:
-		return m.startRadio()
-	case keyClearQueue:
-		if len(m.upcoming()) == 0 {
-			return m, m.setStatus("Queue is empty", false)
-		}
-		m.confirmFrom, m.mode = m.mode, modeConfirm
-		return m, nil
+		return m.openSearch()
 	case keyQueueFocus:
 		if len(m.upcoming()) == 0 {
 			return m, m.setStatus("Queue is empty", false)
@@ -765,14 +824,9 @@ func (m Model) handleGlobalKey(k string) (tea.Model, tea.Cmd) {
 		m.mode = modeQueue
 		m.queueCursor, m.queueOff = 0, 0
 		return m, nil
-	case keySkip:
-		p := m.deps.Player
-		return m, m.action(false, func(ctx context.Context) error { return p.Skip(ctx) })
 	case keyPause:
 		p := m.deps.Player
 		return m, m.action(false, func(ctx context.Context) error { return p.TogglePause(ctx) })
-	case keyQuit:
-		return m, m.quit()
 	}
 	if n, ok := seekPercentForKey(k); ok {
 		p := m.deps.Player
@@ -930,10 +984,7 @@ func (m Model) djEntry(r int) playlistEntry {
 
 // djWindow is how many rows the popup shows at once on this terminal.
 func (m Model) djWindow() int {
-	overhead := 3 // top border, keys line, bottom border
-	if m.djEditing {
-		overhead = 4
-	}
+	overhead := 4 // top border, autodj line, keys line, bottom border
 	return max(min(m.djRowCount(), m.height-2-overhead), 1)
 }
 
@@ -958,18 +1009,15 @@ func (m *Model) clampDJ() {
 // background, so their tempo is there by the time it is wanted.
 func (m Model) openDJ() (Model, tea.Cmd) {
 	m.djFrom, m.mode = m.mode, modeDJ
-	m.djActive, m.djEditing, m.djWarn = true, false, ""
+	m.djActive = true
 	m.djCursor, m.djOff = min(1, len(m.upcoming())), 0 // the first queued song
 	m.scrollDJ()
 	return m, m.startQueuedAnalyses()
 }
 
 func (m Model) handleDJKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.djEditing {
-		return m.handleDJEditKey(msg)
-	}
 	switch msg.String() {
-	case keyEsc, keyDJ:
+	case keyEsc:
 		m.mode = m.djFrom
 		m.clampQueue()
 	case keyDown, keyShiftDown:
@@ -978,19 +1026,41 @@ func (m Model) handleDJKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyUp, keyShiftUp:
 		m.djCursor = max(m.djCursor-1, 0)
 		m.scrollDJ()
-	case keyDJSort:
-		return m.sortQueueByBPM()
-	case keyDJSetBPM:
-		if m.djRowCount() == 0 {
-			return m, nil
-		}
-		m.djEditing, m.djWarn = true, ""
-		m.djInput.SetValue("")
-		m.djInput.Width = 8
-		m.scrollDJ()
-		return m, m.djInput.Focus()
 	}
 	return m, nil
+}
+
+// toggleAutoDJ switches autodj on or off (the player is told from a cmd: it may
+// have to stop a transition, which takes a moment).
+func (m Model) toggleAutoDJ() (Model, tea.Cmd) {
+	if m.deps.SetAutoDJ == nil {
+		return m, m.setStatus("Autodj is not available", true)
+	}
+	m.autoDJ = !m.autoDJ
+	on, set, songs := m.autoDJ, m.deps.SetAutoDJ, m.songs.lookup
+	status := "Autodj off"
+	if on {
+		status = "Autodj on: the next song starts under the end of this one"
+	}
+	cmds := []tea.Cmd{func() tea.Msg { set(on, songs); return nil }, m.setStatus(status, false)}
+	if on {
+		// autodj plans from the beat grids: the playing song and the queue are
+		// analysed completely from now on, as when the DJ popup is opened
+		m.djActive = true
+		cmds = append(cmds, m.startQueuedAnalyses())
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// nextTransition says in words how the playing song will hand over to the next.
+func (m Model) nextTransition() string {
+	cur, up := m.currentEntry(), m.upcoming()
+	if cur == nil || len(up) == 0 {
+		return "nothing queued after this song"
+	}
+	a, _ := m.songs.lookup(cur.Filename)
+	b, _ := m.songs.lookup(up[0].Filename)
+	return autodj.For(a, b).Why
 }
 
 // Limits of a BPM set by hand.
@@ -999,58 +1069,42 @@ const (
 	maxSetBPM = 300
 )
 
-// handleDJEditKey types a BPM for the selected song: Enter sets it (empty
-// goes back to the detected one), Esc cancels. Only digits and a decimal point
-// are text here.
-func (m Model) handleDJEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc:
-		m.djEditing, m.djWarn = false, ""
-		m.djInput.Blur()
-		m.scrollDJ()
-		return m, nil
-	case keyEnter:
-		return m.commitBPM()
+// parseBPM reads the text of a BPM set by hand: empty means go back to the
+// detected one (clear). warn is what is wrong with it, if anything.
+func parseBPM(text string) (v float64, clear bool, warn string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0, true, ""
 	}
-	for _, r := range msg.Runes {
-		if (r < '0' || r > '9') && r != '.' {
-			return m, nil
-		}
+	v, err := strconv.ParseFloat(text, 64)
+	switch {
+	case err != nil:
+		return 0, false, "That is not a number"
+	case v < minSetBPM || v > maxSetBPM:
+		return 0, false, fmt.Sprintf("BPM must be between %d and %d", minSetBPM, maxSetBPM)
 	}
-	m.djWarn = ""
-	var cmd tea.Cmd
-	m.djInput, cmd = m.djInput.Update(msg)
-	return m, cmd
+	return v, false, ""
 }
 
-func (m Model) commitBPM() (tea.Model, tea.Cmd) {
+// setBPM sets the BPM of the popup's selected song to text (see parseBPM). A bad
+// text changes nothing and is returned as warn.
+func (m Model) setBPM(text string) (next Model, status, warn string) {
+	v, clear, warn := parseBPM(text)
+	if warn != "" {
+		return m, "", warn
+	}
 	e := m.djEntry(m.djCursor)
 	id := yt.VideoID(e.Filename)
 	title, _, _ := m.entryInfo(e)
-	text := strings.TrimSpace(m.djInput.Value())
-	var status string
-	switch {
-	case text == "":
+	if clear {
 		delete(m.bpmSet, id)
 		status = "BPM of " + safe(title) + " is the detected one again"
-	default:
-		v, err := strconv.ParseFloat(text, 64)
-		switch {
-		case err != nil:
-			m.djWarn = "That is not a number"
-			return m, nil
-		case v < minSetBPM || v > maxSetBPM:
-			m.djWarn = fmt.Sprintf("BPM must be between %d and %d", minSetBPM, maxSetBPM)
-			return m, nil
-		}
+	} else {
 		m.bpmSet[id] = v
 		status = fmt.Sprintf("Set BPM of %s to %s", safe(title), strconv.FormatFloat(v, 'f', -1, 64))
 	}
-	m.djEditing, m.djWarn = false, ""
-	m.djInput.Blur()
 	m.sortDesc = false // the next sort starts from the slowest again
-	m.scrollDJ()
-	return m, m.setStatus(status, false)
+	return m, status, ""
 }
 
 // sortQueueByBPM orders the upcoming songs by tempo, slowest (chillest) first;
@@ -1129,7 +1183,7 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	}, m.setStatus(status, false))
 }
 
-// radioCount is how many similar songs the radio key adds.
+// radioCount is how many similar songs :radio adds.
 const radioCount = 20
 
 // radioSeeds picks up to three songs to find similar ones for: the current

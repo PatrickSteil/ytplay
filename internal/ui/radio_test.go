@@ -77,7 +77,7 @@ func TestRadioNeedsSomethingPlaying(t *testing.T) {
 	var calls []similarCall
 	m := radioModel(t, &calls, nil, nil)
 	m, _ = update(m, propEvent("playlist-pos", "-1"))
-	m, _ = send(m, "r")
+	m, _ = typeCommand(m, "radio")
 	if m.radioBusy {
 		t.Error("radio must not start without a seed")
 	}
@@ -92,7 +92,7 @@ func TestRadioNeedsSomethingPlaying(t *testing.T) {
 func TestRadioRequestsTwentySimilarExcludingEverythingInThePlaylist(t *testing.T) {
 	var calls []similarCall
 	m := radioModel(t, &calls, songs(3), nil)
-	m, cmd := send(m, "r")
+	m, cmd := typeCommand(m, "radio")
 	if !strings.Contains(m.status, "Finding similar") {
 		t.Errorf("status = %q", m.status)
 	}
@@ -114,7 +114,7 @@ func TestRadioRequestsTwentySimilarExcludingEverythingInThePlaylist(t *testing.T
 func TestRadioResultsAreQueued(t *testing.T) {
 	var calls []similarCall
 	m := radioModel(t, &calls, songs(3), nil)
-	m, cmd := send(m, "r")
+	m, cmd := typeCommand(m, "radio")
 	done := findMsg[radioDoneMsg](cmd)
 	m, cmd = update(m, *done)
 	m = run(m, cmd)
@@ -150,17 +150,17 @@ func TestRadioErrorAndEmptyResult(t *testing.T) {
 func TestRadioIgnoredWhileOneIsRunning(t *testing.T) {
 	var calls []similarCall
 	m := radioModel(t, &calls, songs(1), nil)
-	m, cmd1 := send(m, "r")
+	m, cmd1 := typeCommand(m, "radio")
 	if cmd1 == nil {
 		t.Fatal("first radio should start")
 	}
-	_, cmd2 := send(m, "r")
+	_, cmd2 := typeCommand(m, "radio")
 	if cmd2 != nil {
 		t.Error("second radio while one is running must be ignored")
 	}
 	done := findMsg[radioDoneMsg](cmd1)
 	m, _ = update(m, *done)
-	_, cmd3 := send(m, "r")
+	_, cmd3 := typeCommand(m, "radio")
 	if cmd3 == nil {
 		t.Error("radio should work again once finished")
 	}
@@ -173,8 +173,8 @@ func TestRadioWorksFromResultsAndQueueModesButNotWhileTyping(t *testing.T) {
 	if m.mode != modeQueue {
 		t.Fatalf("mode = %v", m.mode)
 	}
-	if _, cmd := send(m, "r"); cmd == nil {
-		t.Error("r should work in queue mode")
+	if _, cmd := typeCommand(m, "radio"); cmd == nil {
+		t.Error(":radio should work in queue mode")
 	}
 	typing, _ := send(radioModel(t, &calls, songs(1), nil), "/")
 	typing, _ = send(typing, "r")

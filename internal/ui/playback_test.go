@@ -125,12 +125,13 @@ func TestEnterPlaysSelectedAndKeepsResultsOpen(t *testing.T) {
 	}
 }
 
-func TestQKeyQueuesSeveralSongsInARow(t *testing.T) {
+func TestAddCommandQueuesSeveralSongsInARow(t *testing.T) {
 	m := withResults(t, 3)
 	var cmd tea.Cmd
-	m, cmd = send(m, "q")
+	m, cmd = typeCommand(m, "add")
 	m = run(m, cmd)
-	m, cmd = send(m, "j", "q")
+	m, _ = send(m, "j")
+	m, cmd = typeCommand(m, "add")
 	m = run(m, cmd)
 	want := []string{"queue https://www.youtube.com/watch?v=a", "queue https://www.youtube.com/watch?v=b"}
 	got := actionsOf(m).calls
@@ -145,10 +146,10 @@ func TestQKeyQueuesSeveralSongsInARow(t *testing.T) {
 	}
 }
 
-func TestGlobalKeysInNormalAndResultsModes(t *testing.T) {
+func TestDirectKeysInNormalAndResultsModes(t *testing.T) {
 	for name, start := range map[string]Model{"normal": newTestModel(), "results": withResults(t, 2)} {
 		t.Run(name, func(t *testing.T) {
-			cases := map[string]string{"s": "skip", " ": "pause", "0": "seek 0", "5": "seek 50", "9": "seek 90", "=": "seek 100"}
+			cases := map[string]string{" ": "pause", "0": "seek 0", "5": "seek 50", "9": "seek 90", "=": "seek 100"}
 			for k, want := range cases {
 				m := start
 				m, cmd := send(m, k)

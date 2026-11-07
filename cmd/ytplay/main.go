@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/PatrickSteil/ytplay/internal/analyze"
+	"github.com/PatrickSteil/ytplay/internal/autodj"
 	"github.com/PatrickSteil/ytplay/internal/cover"
 	"github.com/PatrickSteil/ytplay/internal/mpris"
 	"github.com/PatrickSteil/ytplay/internal/mpv"
@@ -103,6 +105,8 @@ func runTUI(ytdlp, mpvPath string) int {
 		publish = startPublisher(srv, stop)
 	}
 
+	// Full analyses (DJ mode) share half the cores, however many songs are in flight.
+	pool := analyze.NewPool(max(1, runtime.NumCPU()/2))
 	covers := cover.NewCache()
 	m := ui.New(ui.Deps{
 		Publish: publish,
@@ -113,11 +117,18 @@ func runTUI(ytdlp, mpvPath string) int {
 		Info: func(ctx context.Context, id string) (yt.Info, error) {
 			return yt.FetchInfo(ctx, ytdlp, id, 10)
 		},
-		Analyze: func(ctx context.Context, id string, duration float64) (analyze.Result, error) {
-			return analyze.Song(ctx, mpvPath, ytdlp, id, duration)
+		Analyze: func(ctx context.Context, id string, duration float64, level analyze.Level) (analyze.Result, error) {
+			o := analyze.Options{Level: level}
+			if level == analyze.Full {
+				o.Pool = pool // light stays on one core
+			}
+			return analyze.SongWith(ctx, mpvPath, ytdlp, id, duration, o)
 		},
 		Similar: func(ctx context.Context, seeds []string, exclude map[string]bool, n int) ([]yt.Result, error) {
 			return yt.Similar(ctx, ytdlp, seeds, exclude, n)
+		},
+		SetAutoDJ: func(on bool, songs func(url string) (autodj.Song, bool)) {
+			pl.SetAutoDJ(on, songs)
 		},
 		Download: func(ctx context.Context, id, path string) error {
 			return yt.Download(ctx, ytdlp, id, path)

@@ -10,7 +10,7 @@ import (
 
 func TestXAsksBeforeClearing(t *testing.T) {
 	m := queueModel(t, 4) // 3 upcoming
-	m, _ = send(m, "X")
+	m, _ = typeCommand(m, "clear")
 	if m.mode != modeConfirm {
 		t.Fatalf("mode = %v, want the confirmation popup", m.mode)
 	}
@@ -27,7 +27,7 @@ func TestXAsksBeforeClearing(t *testing.T) {
 
 func TestPopupWordsASingleSong(t *testing.T) {
 	m := queueModel(t, 2)
-	m, _ = send(m, "X")
+	m, _ = typeCommand(m, "clear")
 	if out := m.View(); !strings.Contains(out, "1 upcoming song?") {
 		t.Errorf("singular wording missing:\n%s", out)
 	}
@@ -35,7 +35,7 @@ func TestPopupWordsASingleSong(t *testing.T) {
 
 func TestConfirmingClearsTheQueueButKeepsThePlayingSong(t *testing.T) {
 	m := queueModel(t, 4)
-	m, _ = send(m, "X")
+	m, _ = typeCommand(m, "clear")
 	m, cmd := send(m, "y")
 	m = run(m, cmd)
 	if got := actionsOf(m).calls; len(got) != 1 || got[0] != "clear" {
@@ -58,7 +58,7 @@ func TestConfirmingClearsTheQueueButKeepsThePlayingSong(t *testing.T) {
 func TestCancelKeepsTheQueue(t *testing.T) {
 	for _, k := range []string{"n", "esc"} {
 		m := queueModel(t, 4)
-		m, _ = send(m, "X")
+		m, _ = typeCommand(m, "clear")
 		m, _ = send(m, k)
 		if m.mode != modeNormal || queueIDs(m) != "e0,e1,e2,e3" {
 			t.Errorf("%s: mode=%v playlist=%s", k, m.mode, queueIDs(m))
@@ -76,11 +76,14 @@ func TestPopupReturnsToWhereItWasOpened(t *testing.T) {
 	m := withResults(t, 3)
 	m, _ = update(m, plEvent(t, "*a", "b", "c"))
 	m, _ = update(m, propEvent("playlist-pos", "0"))
-	m, _ = send(m, "X", "n")
+	m, _ = typeCommand(m, "clear")
+	m, _ = send(m, "n")
 	if m.mode != modeResults {
 		t.Errorf("mode = %v, want results", m.mode)
 	}
-	m, _ = send(m, "tab", "X", "n")
+	m, _ = send(m, "tab")
+	m, _ = typeCommand(m, "clear")
+	m, _ = send(m, "n")
 	if m.mode != modeQueue {
 		t.Errorf("mode = %v, want queue", m.mode)
 	}
@@ -88,7 +91,7 @@ func TestPopupReturnsToWhereItWasOpened(t *testing.T) {
 
 func TestOtherKeysAreIgnoredWhileAsking(t *testing.T) {
 	m := queueModel(t, 4)
-	m, _ = send(m, "X")
+	m, _ = typeCommand(m, "clear")
 	for _, k := range []string{"s", " ", "5", "=", "r", "q", "Q", "/", "enter", "x", "tab", "j"} {
 		next, c := send(m, k)
 		if next.mode != modeConfirm {
@@ -108,12 +111,12 @@ func TestOtherKeysAreIgnoredWhileAsking(t *testing.T) {
 
 func TestNothingToClear(t *testing.T) {
 	m := queueModel(t, 1)
-	m, _ = send(m, "X")
+	m, _ = typeCommand(m, "clear")
 	if m.mode != modeNormal || !strings.Contains(m.status, "empty") {
 		t.Errorf("mode=%v status=%q", m.mode, m.status)
 	}
 	idle := newTestModel()
-	idle, _ = send(idle, "X")
+	idle, _ = typeCommand(idle, "clear")
 	if idle.mode != modeNormal {
 		t.Errorf("idle: mode = %v", idle.mode)
 	}
@@ -129,7 +132,7 @@ func TestXIsTypableInTheSearchBar(t *testing.T) {
 
 func TestConfirmWhenTheQueueEmptiedMeanwhileDoesNothing(t *testing.T) {
 	m := queueModel(t, 4)
-	m, _ = send(m, "X")
+	m, _ = typeCommand(m, "clear")
 	m, _ = update(m, plEvent(t, "*e0")) // e.g. removed elsewhere
 	m, cmd := send(m, "y")
 	m = run(m, cmd)
@@ -143,7 +146,7 @@ func TestPopupKeepsTheScreenExactlyTheSameSize(t *testing.T) {
 		m := at(queueModel(t, 6), size[0], size[1])
 		m, _ = update(m, positionMsg{elapsed: 5, total: 100})
 		plain := viewLines(m)
-		m, _ = send(m, "X")
+		m, _ = typeCommand(m, "clear")
 		popup := viewLines(m)
 		if len(popup) != len(plain) {
 			t.Errorf("%v: %d lines with popup, %d without", size, len(popup), len(plain))
@@ -164,7 +167,7 @@ func TestPopupKeepsTheScreenExactlyTheSameSize(t *testing.T) {
 
 func TestPopupIsCentered(t *testing.T) {
 	m := at(queueModel(t, 4), 120, 30)
-	m, _ = send(m, "X")
+	m, _ = typeCommand(m, "clear")
 	ls := viewLines(m)
 	row, col := -1, -1
 	for i, l := range ls {
@@ -207,7 +210,7 @@ func TestOverlayKeepsStyledContentAroundTheBox(t *testing.T) {
 func TestPopupSurvivesTinyTerminals(t *testing.T) {
 	for _, size := range [][2]int{{1, 1}, {2, 3}, {5, 2}, {10, 1}} {
 		m := at(queueModel(t, 3), size[0], size[1])
-		m, _ = send(m, "X")
+		m, _ = typeCommand(m, "clear")
 		_ = m.View() // must not panic
 	}
 }
