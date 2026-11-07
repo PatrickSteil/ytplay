@@ -35,10 +35,38 @@ type Result struct {
 	Key        string  // e.g. "F# minor"
 	Camelot    string  // DJ notation of the key, e.g. "11A"
 	KeyScore   float64 // how well the best key matched, 0..1
+	// Edges is where the music starts and stops and, if there is a steady beat,
+	// where the beats fall at both ends (without one the beat grids are empty).
+	Edges Edges
+	// Level says how much was asked for. A Light result has no Edges.
+	Level Level
 }
 
-// Analyze estimates tempo and key of mono PCM at SampleRate.
-func Analyze(pcm []float32) (Result, error) {
+// Level is how much of an analysis is wanted.
+type Level int
+
+const (
+	// Full is tempo, key and the beat grids at both ends: all that the DJ
+	// features need. It is the zero value, so a Result nobody labelled is Full.
+	Full Level = iota
+	// Light is tempo and key only, what the header shows: no beat grids (measured:
+	// 4.3 s of compute per song instead of 6.0 s, 29% less).
+	Light
+)
+
+// Options says how an analysis is done.
+type Options struct {
+	Level Level
+	// Pool, if not nil, spreads the work over its workers, and lets the key be
+	// computed beside the tempo. The result is the same either way.
+	Pool *Pool
+}
+
+// Analyze estimates tempo, key and beat grids of mono PCM at SampleRate.
+func Analyze(pcm []float32) (Result, error) { return AnalyzeWith(pcm, Options{}) }
+
+// AnalyzeWith is Analyze at the level, and on the pool, that Options asks for.
+func AnalyzeWith(pcm []float32, o Options) (Result, error) {
 	if len(pcm) < minSeconds*SampleRate {
 		return Result{}, errors.New("not enough audio to analyse")
 	}
@@ -49,12 +77,33 @@ func Analyze(pcm []float32) (Result, error) {
 	if math.Sqrt(energy/float64(len(pcm))) < 1e-4 {
 		return Result{}, errors.New("audio is silent")
 	}
-	var res Result
-	res.BPM, res.TempoScore = tempo(pcm)
+	res := Result{Level: o.Level}
+	// The key does not depend on the tempo: with a pool it is worked out beside it.
+	var key string
+	var keyScore float64
+	keyDone := make(chan struct{})
+	findKey := func() {
+		key, keyScore = detectKey(pcm, o.Pool)
+		close(keyDone)
+	}
+	if o.Pool != nil {
+		go findKey()
+	}
+	res.BPM, res.TempoScore = tempo(pcm, o.Pool)
 	if res.TempoScore < minTempoScore {
 		res.BPM = 0 // no steady beat: better to say nothing than something wrong
+		if o.Level == Full {
+			start, end := audibleRange(pcm) // but where the music starts and stops is still known
+			res.Edges = Edges{AudioStart: start, AudioEnd: end}
+		}
+	} else if o.Level == Full {
+		res.Edges = edgesOf(pcm, res.BPM, o.Pool)
 	}
-	res.Key, res.KeyScore = detectKey(pcm)
+	if o.Pool == nil {
+		findKey()
+	}
+	<-keyDone
+	res.Key, res.KeyScore = key, keyScore
 	if res.Key != "" {
 		res.Camelot = camelot(res.Key)
 	}
@@ -123,26 +172,105 @@ func hann(n int) []float64 {
 	return w
 }
 
-// eachFrame calls fn with the magnitudes (bins 0..n/2) of consecutive windows
-// of x, in order. The slice is reused between calls: copy it to keep it.
-// Frames are handed over one at a time because a whole song's spectrogram
-// would take hundreds of megabytes.
-func eachFrame(x []float32, n, hop int, fn func(t int, mag []float64)) {
-	plan, win := newFFT(n), hann(n)
-	frames := (len(x) - n) / hop
-	re, im := make([]float64, n), make([]float64, n)
-	mag := make([]float64, n/2+1)
-	for t := 0; t < frames; t++ {
-		seg := x[t*hop : t*hop+n]
+// frameBatch is how many frames one goroutine handles at a time. It is a
+// variable only so that tests can ask for a single batch, the plain one-pass
+// loop the batched analysis must reproduce exactly.
+var frameBatch = 64
+
+// framer cuts x into windows of n samples, one every hop, and gives their
+// spectra. Windows are handed over a batch at a time and never all at once,
+// because a whole song's spectrogram would take hundreds of megabytes.
+type framer struct {
+	x      []float32
+	n, hop int
+	plan   *fftPlan
+	win    []float64
+}
+
+func newFramer(x []float32, n, hop int) *framer {
+	return &framer{x: x, n: n, hop: hop, plan: newFFT(n), win: hann(n)}
+}
+
+// frames is how many windows fit in x.
+func (f *framer) frames() int { return max((len(f.x)-f.n)/f.hop, 0) }
+
+// each calls fn with the magnitudes (bins 0..n/2) of windows from to to-1, in
+// order. The slice is reused between calls: copy it to keep it. It is safe to
+// call from several goroutines at once (the plan and the window are only read).
+func (f *framer) each(from, to int, fn func(t int, mag []float64)) {
+	re, im := make([]float64, f.n), make([]float64, f.n)
+	mag := make([]float64, f.n/2+1)
+	for t := from; t < to; t++ {
+		seg := f.x[t*f.hop : t*f.hop+f.n]
 		for i := range re {
-			re[i], im[i] = float64(seg[i])*win[i], 0
+			re[i], im[i] = float64(seg[i])*f.win[i], 0
 		}
-		plan.transform(re, im)
+		f.plan.transform(re, im)
 		for k := range mag {
 			mag[k] = math.Hypot(re[k], im[k])
 		}
 		fn(t, mag)
 	}
+}
+
+// batches is how many batches of frameBatch there are for n items.
+func batches(n int) int { return (n + frameBatch - 1) / frameBatch }
+
+// bandRanges are the frequency bands (Hz) the onsets are measured in.
+var bandRanges = [3][2]float64{{30, 200}, {200, 2000}, {2000, 8000}}
+
+// bandBins are the FFT bins of a window of win samples that fall in each band.
+func bandBins(win int) (bins [3][]int) {
+	binHz := float64(SampleRate) / float64(win)
+	for b, r := range bandRanges {
+		for k := 0; k <= win/2; k++ {
+			if f := float64(k) * binHz; f >= r[0] && f < r[1] {
+				bins[b] = append(bins[b], k)
+			}
+		}
+	}
+	return bins
+}
+
+// bandFlux is, for each band, how much the log-compressed spectrum grew from
+// each window to the next (only growth counts): value t-1 belongs to window t.
+// It is the raw material of both onset envelopes (the coarse one for the tempo,
+// the fine one for the beat grids). Batches of windows are computed on the pool;
+// each starts by recomputing the window before its first, so every value comes
+// out of the same operations as in a single pass.
+func bandFlux(x []float32, win, hop int, pool *Pool) (flux [3][]float64) {
+	f := newFramer(x, win, hop)
+	frames := f.frames()
+	if frames < 2 {
+		return flux
+	}
+	for b := range flux {
+		flux[b] = make([]float64, frames-1)
+	}
+	bins := bandBins(win)
+	pool.Run(batches(frames-1), func(k int) {
+		j0 := k * frameBatch
+		j1 := min(j0+frameBatch, frames-1) // this batch makes flux[j0:j1]
+		prev, cur := make([]float64, win/2+1), make([]float64, win/2+1)
+		f.each(j0, j1+1, func(t int, mag []float64) {
+			for i, m := range mag {
+				cur[i] = math.Log1p(100 * m)
+			}
+			if t > j0 {
+				for b := range bins {
+					var s float64
+					for _, i := range bins[b] {
+						if d := cur[i] - prev[i]; d > 0 {
+							s += d
+						}
+					}
+					flux[b][t-1] = s
+				}
+			}
+			prev, cur = cur, prev
+		})
+	})
+	return flux
 }
 
 // ---- tempo ----
@@ -166,38 +294,8 @@ const (
 )
 
 // onsetEnvelope is the per-frame "something starts now" strength.
-func onsetEnvelope(x []float32) []float64 {
-	bands := [...][2]float64{{30, 200}, {200, 2000}, {2000, 8000}}
-	binHz := float64(SampleRate) / tempoWin
-	var bins [len(bands)][]int
-	for b, band := range bands {
-		for k := 0; k <= tempoWin/2; k++ {
-			if f := float64(k) * binHz; f >= band[0] && f < band[1] {
-				bins[b] = append(bins[b], k)
-			}
-		}
-	}
-	// flux[b][t] is how much the energy of band b grew from frame t to t+1.
-	var flux [len(bands)][]float64
-	prev := make([]float64, tempoWin/2+1)
-	cur := make([]float64, tempoWin/2+1)
-	eachFrame(x, tempoWin, tempoHop, func(t int, mag []float64) {
-		for k, m := range mag {
-			cur[k] = math.Log1p(100 * m)
-		}
-		if t > 0 {
-			for b := range bands {
-				var f float64
-				for _, k := range bins[b] {
-					if d := cur[k] - prev[k]; d > 0 {
-						f += d
-					}
-				}
-				flux[b] = append(flux[b], f)
-			}
-		}
-		prev, cur = cur, prev
-	})
+func onsetEnvelope(x []float32, pool *Pool) []float64 {
+	flux := bandFlux(x, tempoWin, tempoHop, pool)
 	if len(flux[0]) < 1 {
 		return nil
 	}
@@ -265,8 +363,8 @@ func autocorrelation(x []float64, maxLag int) []float64 {
 // length of several bars, is what tells the beat from a rhythm that merely
 // repeats a lot, such as a dotted pattern 1.5 beats long: that one lines up
 // with the bars only every third bar, while the beat lines up with every one.
-func tempo(x []float32) (bpm, score float64) {
-	env := onsetEnvelope(x)
+func tempo(x []float32, pool *Pool) (bpm, score float64) {
+	env := onsetEnvelope(x, pool)
 	if len(env) < 100 {
 		return 0, 0
 	}
@@ -326,7 +424,7 @@ const (
 )
 
 // chroma sums, over all frames, the energy per pitch class.
-func chroma(x []float32) [12]float64 {
+func chroma(x []float32, pool *Pool) [12]float64 {
 	binHz := float64(SampleRate) / keyWin
 	lo, hi := int(math.Ceil(keyMinHz/binHz)), int(keyMaxHz/binHz)
 
@@ -335,24 +433,32 @@ func chroma(x []float32) [12]float64 {
 		midi  float64
 		amp   float64
 	}
-	var peaks []peak
-	nFrames := 0
-	eachFrame(x, keyWin, keyHop, func(t int, mag []float64) {
-		nFrames = t + 1
-		var top float64
-		for k := lo; k <= hi; k++ {
-			top = math.Max(top, mag[k])
-		}
-		for k := lo + 1; k < hi; k++ {
-			a, b, c := mag[k-1], mag[k], mag[k+1]
-			if !(b > a && b >= c && b > 0.05*top) {
-				continue
+	f := newFramer(x, keyWin, keyHop)
+	nFrames := f.frames()
+	perBatch := make([][]peak, batches(nFrames)) // each batch's peaks, in frame order
+	pool.Run(len(perBatch), func(k int) {
+		var mine []peak
+		f.each(k*frameBatch, min((k+1)*frameBatch, nFrames), func(t int, mag []float64) {
+			var top float64
+			for k := lo; k <= hi; k++ {
+				top = math.Max(top, mag[k])
 			}
-			d := 0.5 * (a - c) / (a - 2*b + c + 1e-12) // parabolic interpolation
-			freq := (float64(k) + d) * binHz
-			peaks = append(peaks, peak{t, 12*math.Log2(freq/440) + 69, math.Sqrt(b)})
-		}
+			for k := lo + 1; k < hi; k++ {
+				a, b, c := mag[k-1], mag[k], mag[k+1]
+				if !(b > a && b >= c && b > 0.05*top) {
+					continue
+				}
+				d := 0.5 * (a - c) / (a - 2*b + c + 1e-12) // parabolic interpolation
+				freq := (float64(k) + d) * binHz
+				mine = append(mine, peak{t, 12*math.Log2(freq/440) + 69, math.Sqrt(b)})
+			}
+		})
+		perBatch[k] = mine
 	})
+	var peaks []peak
+	for _, mine := range perBatch {
+		peaks = append(peaks, mine...)
+	}
 	if len(peaks) == 0 {
 		return [12]float64{}
 	}
@@ -411,8 +517,8 @@ func pearson(a, b [12]float64) float64 {
 }
 
 // detectKey returns the best matching key and its correlation (0 when none).
-func detectKey(x []float32) (string, float64) {
-	c := chroma(x)
+func detectKey(x []float32, pool *Pool) (string, float64) {
+	c := chroma(x, pool)
 	best, bestKey := 0.0, ""
 	for tonic := 0; tonic < 12; tonic++ {
 		for _, cand := range [...]struct {

@@ -87,11 +87,52 @@ func Fetch(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64)
 	return pcm, err
 }
 
-// Song fetches and analyses a YouTube video.
-func Song(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64) (Result, error) {
+// Excerpt is the part of a song that the audio is: Offset seconds into a song
+// that is Duration seconds long (0 if unknown), as many seconds as the audio
+// has. A song is analysed from an excerpt when only part of it arrived in time,
+// or when it is longer than maxSeconds and only its middle is read.
+type Excerpt struct {
+	Offset, Duration float64
+}
+
+// wholeSlack is how much shorter than the song's duration the audio may be and
+// still count as all of it (durations are whole seconds, decoding rounds).
+const wholeSlack = 3.0
+
+// analyzeExcerpt analyses pcm, which is an excerpt of a song, and keeps of the
+// edges only what the excerpt can tell about the song. Edges are times in the
+// song: the end of an excerpt is not the end of the song (the planner would cut
+// the song off there), and in the middle of a long track nothing is where it
+// seems. Tempo and key are those of the excerpt.
+func analyzeExcerpt(pcm []float32, x Excerpt, o Options) (Result, error) {
+	res, err := AnalyzeWith(pcm, o)
+	if err != nil || res.Level == Light {
+		return res, err
+	}
+	seconds := float64(len(pcm)) / SampleRate
+	switch {
+	case x.Offset > 0:
+		res.Edges = Edges{} // times in the excerpt are not times in the song
+	case x.Duration > 0 && seconds < x.Duration-wholeSlack:
+		// The beginning is the song's, the end is not.
+		res.Edges = Edges{AudioStart: res.Edges.AudioStart, Start: res.Edges.Start}
+	}
+	return res, nil
+}
+
+// SongWith fetches a YouTube video and analyses it as Options asks. If the audio
+// is not all of the song (see Excerpt) the edges that cannot be known are left
+// out. (If reading the middle of a long track failed and the beginning was read
+// instead, the edges are left out as well: safe, not exact.)
+func SongWith(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64, o Options) (Result, error) {
 	pcm, err := Fetch(ctx, mpvPath, ytdlpPath, id, duration)
 	if err != nil {
 		return Result{}, err
 	}
-	return Analyze(pcm)
+	return analyzeExcerpt(pcm, Excerpt{Offset: float64(windowStart(duration)), Duration: duration}, o)
+}
+
+// Song fetches and analyses a YouTube video completely.
+func Song(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64) (Result, error) {
+	return SongWith(ctx, mpvPath, ytdlpPath, id, duration, Options{})
 }

@@ -1,0 +1,8 @@
+# Where the steady beat of a song starts, as judged by ear (see corpus_test.go).
+#
+# Columns, separated by tabs:  YouTube id | seconds of the first kick of the steady beat | note
+#
+# Only songs whose beat start someone has listened to are listed. TestCorpus checks
+# that the start grid is sure and its anchor lies between truth-50 ms and truth+2 bars.
+# (The detector's own reading of these tracks is in the TestCorpus output; the
+# click previews to listen to are rendered from it.)

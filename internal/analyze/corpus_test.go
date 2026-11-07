@@ -52,6 +52,38 @@ func readCorpus(t *testing.T) []corpusEntry {
 	return out
 }
 
+// readBeatStarts reads testdata/beatstart.tsv: for the songs someone has listened
+// to, the time in seconds at which the steady beat starts.
+func readBeatStarts(t *testing.T) map[string]float64 {
+	t.Helper()
+	f, err := os.Open("testdata/beatstart.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	out := map[string]float64{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		cols := strings.Split(line, "\t")
+		if len(cols) < 2 {
+			t.Fatalf("bad beatstart line %q", line)
+		}
+		sec, err := strconv.ParseFloat(cols[1], 64)
+		if err != nil {
+			t.Fatalf("bad seconds in %q: %v", line, err)
+		}
+		out[cols[0]] = sec
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func loadPCM(path string) ([]float32, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -82,6 +114,11 @@ func fetchMissing(t *testing.T, dir string, entries []corpusEntry) {
 	if err != nil {
 		t.Skip("yt-dlp not found")
 	}
+	// The corpus holds whole songs: a long track on a slow stream would be cut
+	// short by the app's budget (and then analysed as if it were the whole song).
+	oldBudget := fetchBudget
+	fetchBudget = 4 * time.Minute
+	defer func() { fetchBudget = oldBudget }()
 	var wg sync.WaitGroup
 	for _, e := range entries {
 		path := filepath.Join(dir, e.id+".f32")
@@ -138,6 +175,24 @@ func TestCorpus(t *testing.T) {
 	entries := readCorpus(t)
 	fetchMissing(t, dir, entries)
 
+	// Songs whose beat is plain at both ends must be sure there, songs without a
+	// dependable beat (live drums that wander, a ballad) must not be.
+	// (Gecko's off-beat bass keeps its start from being clear enough to be sure
+	// of, so it is not required here.)
+	sureAtBothEnds := map[string]bool{
+		"A2VpR8HahKc": true, "rY0WxgSXdEE": true, "wDuoOapZ9Z0": true, "OPf0YbXqDm0": true,
+	}
+	unsureAtBothEnds := map[string]bool{"hTWKbfoikeg": true, "hLQl3WQQoQ0": true}
+	beatStarts := readBeatStarts(t)
+	// Songs the tempo is known to come out at half or double speed for. Any other
+	// song that does is a regression.
+	knownOctave := map[string]string{
+		"hLQl3WQQoQ0": "Adele: a ballad whose pulse can be counted either way",
+		"HUvovrkygZg": "Pjanoo club mix: minutes of piano, one note per two beats, dominate the whole-song tempo",
+	}
+	grid := func(g BeatGrid) string {
+		return fmt.Sprintf("%6.2f %4.1f %3.0fms %5.1f %-4s @%.2fs", 60/math.Max(g.Period, 1e-9), g.Sharp, g.Wobble*1000, g.Margin, map[bool]string{true: "SURE", false: "-"}[g.Sure], g.Anchor)
+	}
 	fmt.Printf("\n%-56s %6s | %7s %6s | %-10s %5s\n", "song", "truth", "BPM", "beat", "key", "score")
 	songs, exact, octave := 0, 0, 0
 	for _, e := range entries {
@@ -163,6 +218,9 @@ func TestCorpus(t *testing.T) {
 			songs, exact = songs+1, exact+1
 		case octaveOK(res.BPM, e.bpm, 4):
 			verdict = fmt.Sprintf("x%.2f", res.BPM/e.bpm)
+			if _, known := knownOctave[e.id]; !known {
+				t.Errorf("%s: %.1f BPM, want %.1f: off by a factor of %.2f, and this song is not a known octave case", e.title, res.BPM, e.bpm, res.BPM/e.bpm)
+			}
 			songs, octave = songs+1, octave+1
 		default:
 			verdict = "WRONG"
@@ -171,9 +229,26 @@ func TestCorpus(t *testing.T) {
 		}
 		fmt.Printf("%-56s %6.1f | %7.2f %6.3f | %-10s %5.2f  %s\n",
 			fmt.Sprintf("%s (%.0fs)", e.title, float64(len(full))/SampleRate), e.bpm, res.BPM, res.TempoScore, res.Key, res.KeyScore, verdict)
+		if res.BPM > 0 {
+			fmt.Printf("    audible %.1f..%.1f s   start: %s   end: %s\n", res.Edges.AudioStart, res.Edges.AudioEnd, grid(res.Edges.Start), grid(res.Edges.End))
+		}
+		if sureAtBothEnds[e.id] && !(res.Edges.Start.Sure && res.Edges.End.Sure) {
+			t.Errorf("%s: both ends should be sure, got start %+v end %+v", e.title, res.Edges.Start, res.Edges.End)
+		}
+		if unsureAtBothEnds[e.id] && (res.Edges.Start.Sure || res.Edges.End.Sure) {
+			t.Errorf("%s: neither end may be sure, got start %+v end %+v", e.title, res.Edges.Start, res.Edges.End)
+		}
+		// A beat start someone has heard: the start grid must be sure and its anchor
+		// at that beat or at most two bars (8 beats) after it.
+		if truth, ok := beatStarts[e.id]; ok {
+			g := res.Edges.Start
+			if !g.Sure || g.Anchor < truth-0.05 || g.Anchor > truth+8*g.Period+0.05 {
+				t.Errorf("%s: the beat starts at %.2f s, the start grid says %.2f s (sure: %v)", e.title, truth, g.Anchor, g.Sure)
+			}
+		}
 	}
 	fmt.Printf("\nsongs: %d within 4%%, %d off by an octave or a third, of %d\n", exact, octave, songs)
-	if octave > 1 {
-		t.Errorf("%d songs are off by a factor of 2 or 3, at most 1 is accepted", octave)
+	if octave > len(knownOctave) {
+		t.Errorf("%d songs are off by a factor of 2 or 3, at most the %d known ones are accepted", octave, len(knownOctave))
 	}
 }
