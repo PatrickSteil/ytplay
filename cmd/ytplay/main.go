@@ -111,7 +111,7 @@ func runTUI(ytdlp, mpvPath string) int {
 			return yt.Search(ctx, ytdlp, q, 15)
 		},
 		Info: func(ctx context.Context, id string) (yt.Info, error) {
-			return yt.FetchInfo(ctx, ytdlp, id, 5)
+			return yt.FetchInfo(ctx, ytdlp, id, 10)
 		},
 		Analyze: func(ctx context.Context, id string, duration float64) (analyze.Result, error) {
 			return analyze.Song(ctx, mpvPath, ytdlp, id, duration)
