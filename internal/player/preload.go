@@ -9,6 +9,12 @@ import (
 // paused, on the idle deck. Resolving a YouTube stream takes about 3 s.
 var preloadLead = 15 * time.Second
 
+// autoDJLead is how much longer before the end the next song is loaded when
+// autodj is on: a beat-matched transition starts some 8 s before the end, and
+// a stream takes several seconds to resolve and load, so 15 s is too late to be
+// ready (found by running the real thing).
+var autoDJLead = 15 * time.Second
+
 // pollEvery is how often the player looks at the playback position.
 var pollEvery = 500 * time.Millisecond
 
@@ -43,6 +49,14 @@ func (p *Player) pollLoop(every time.Duration) {
 func (p *Player) poll(ctx context.Context) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.pollPreload(ctx)
+	if p.autoDJ {
+		p.pollTransition(ctx)
+	}
+}
+
+// pollPreload is the preload part of poll. The caller holds p.mu.
+func (p *Player) pollPreload(ctx context.Context) {
 	if p.noPreload || p.pre != nil || p.q.pos < 0 || p.q.pos+1 >= len(p.q.urls) || p.q.urls[p.q.pos+1] == p.preFailed {
 		return
 	}
@@ -55,7 +69,11 @@ func (p *Player) poll(ctx context.Context) {
 	if err != nil || total <= 0 {
 		return
 	}
-	if time.Duration((total-elapsed)*float64(time.Second)) > preloadLead {
+	lead := preloadLead
+	if p.autoDJ {
+		lead += autoDJLead
+	}
+	if time.Duration((total-elapsed)*float64(time.Second)) > lead {
 		return
 	}
 	p.startPreload(ctx)
@@ -77,6 +95,7 @@ func (p *Player) startPreload(ctx context.Context) {
 		p.watch(i, d)
 	}
 	d := p.decks[i]
+	p.resetSpeed(ctx, i) // a speed left over from an easing that was cut short
 	if _, err := d.Command(ctx, "set_property", "pause", true); err != nil {
 		p.preFailed = url
 		return
@@ -105,6 +124,7 @@ func (p *Player) dropPreload(ctx context.Context) {
 	if p.pre == nil {
 		return
 	}
+	p.endTransition(ctx, true, false)
 	_, _ = p.decks[p.pre.deck].Command(ctx, "stop")
 	p.pre = nil
 }
@@ -114,6 +134,12 @@ func (p *Player) dropPreload(ctx context.Context) {
 // It reports false if the deck did not take the command; the caller then loads
 // the song the slow way. The caller holds p.mu.
 func (p *Player) handoff(ctx context.Context) bool {
+	var hadTransition, started bool
+	var ease float64
+	if p.trans != nil {
+		hadTransition, started, ease = true, p.trans.started, p.trans.plan.EaseBack
+	}
+	p.endTransition(ctx, false, true) // while p.pre is still set: puts the next song's volume back
 	pre := p.pre
 	p.pre = nil
 	d := p.decks[pre.deck]
@@ -122,8 +148,16 @@ func (p *Player) handoff(ctx context.Context) bool {
 		return false
 	}
 	_, _ = p.decks[p.active].Command(ctx, "stop")
+	if hadTransition {
+		_, _ = p.decks[p.active].Command(ctx, "set_property", "volume", 100)
+	}
 	p.active, p.entryID = pre.deck, pre.entryID
 	p.q.pos++
+	if started {
+		p.startEase(pre.deck, ease) // it was sounding at the beat-matched speed
+	} else if hadTransition {
+		p.resetSpeed(ctx, pre.deck)
+	}
 	p.emitState()
 	return true
 }

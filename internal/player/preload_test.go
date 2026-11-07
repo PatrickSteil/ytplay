@@ -160,7 +160,7 @@ func TestStalePreloadIsNeverPlayed(t *testing.T) {
 	b.take()
 	a.endFile("eof", 1)
 	eq(t, "events", waitEvents(t, p, 3), state("a,c*", 1))
-	eq(t, "c is loaded cold", a.take(), []string{"loadfile c replace"})
+	eq(t, "c is loaded cold", a.takeAfter(t, "loadfile c replace"), []string{"loadfile c replace"})
 	eq(t, "deck b was not unpaused", b.take(), nil)
 }
 
@@ -188,7 +188,7 @@ func TestFailedPreloadFallsBackToAColdLoad(t *testing.T) {
 		drain(p)
 		a.endFile("eof", 1)
 		eq(t, "events", waitEvents(t, p, 3), state("a,b*,c", 1))
-		eq(t, "cold load", a.take(), []string{"loadfile b replace"})
+		eq(t, "cold load", a.takeAfter(t, "loadfile b replace"), []string{"loadfile b replace"})
 	})
 	t.Run("the preloaded file fails to open", func(t *testing.T) {
 		p, a, b := preloaded(t)
@@ -198,7 +198,7 @@ func TestFailedPreloadFallsBackToAColdLoad(t *testing.T) {
 		eq(t, "no retry", b.take(), nil)
 		a.endFile("eof", 1)
 		eq(t, "events", waitEvents(t, p, 3), state("a,b*,c", 1))
-		eq(t, "cold load", a.take(), []string{"loadfile b replace"})
+		eq(t, "cold load", a.takeAfter(t, "loadfile b replace"), []string{"loadfile b replace"})
 	})
 }
 
@@ -243,7 +243,7 @@ func TestIdleDeckDyingDisablesPreload(t *testing.T) {
 	b.take()
 	a.endFile("eof", 1)
 	eq(t, "events", waitEvents(t, p, 3), state("a,b*,c", 1))
-	eq(t, "cold load on the surviving deck", a.take(), []string{"loadfile b replace"})
+	eq(t, "cold load on the surviving deck", a.takeAfter(t, "loadfile b replace"), []string{"loadfile b replace"})
 	eq(t, "the dead deck is left alone", b.take(), nil)
 	nearEnd(a)
 	p.poll(bg)

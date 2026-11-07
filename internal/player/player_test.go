@@ -21,9 +21,12 @@ type fakeDeck struct {
 	calls    []string
 	props    map[string]float64
 	nextID   int64
-	failLoad map[string]bool // urls whose loadfile mpv rejects
-	failCmd  map[string]bool // commands (first word) that fail
-	noIDs    bool            // answer loadfile without an entry id, like an older mpv
+	failLoad map[string]bool  // urls whose loadfile mpv rejects
+	failCmd  map[string]bool  // commands (first word) that fail
+	noIDs    bool             // answer loadfile without an entry id, like an older mpv
+	times    []time.Time      // when each command in calls arrived
+	posFn    func() float64   // if set, what time-pos reports
+	onCmd    func(cmd string) // if set, told of every command (under the deck's lock)
 	events   chan mpv.Event
 	done     chan struct{}
 	closed   bool
@@ -44,6 +47,10 @@ func (d *fakeDeck) Command(ctx context.Context, args ...any) (json.RawMessage, e
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.calls = append(d.calls, strings.Join(parts, " "))
+	d.times = append(d.times, time.Now())
+	if d.onCmd != nil {
+		d.onCmd(d.calls[len(d.calls)-1])
+	}
 	if d.closed {
 		return nil, errors.New("mpv exited")
 	}
@@ -66,6 +73,9 @@ func (d *fakeDeck) Command(ctx context.Context, args ...any) (json.RawMessage, e
 func (d *fakeDeck) GetFloat(ctx context.Context, prop string) (float64, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if prop == "time-pos" && d.posFn != nil {
+		return d.posFn(), nil
+	}
 	v, ok := d.props[prop]
 	if !ok {
 		return 0, errors.New("mpv: property unavailable")
@@ -91,7 +101,7 @@ func (d *fakeDeck) take() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	c := d.calls
-	d.calls = nil
+	d.calls, d.times = nil, nil
 	return c
 }
 
@@ -327,7 +337,7 @@ func TestEofAdvancesToTheNextEntry(t *testing.T) {
 	drain(p)
 	a.endFile("eof", 1)
 	eq(t, "events", waitEvents(t, p, 3), state("a,b*", 1))
-	eq(t, "commands", a.take(), []string{"loadfile b replace"})
+	eq(t, "commands", a.takeAfter(t, "loadfile b replace"), []string{"loadfile b replace"})
 
 	a.endFile("eof", 2)
 	eq(t, "events at the end", waitEvents(t, p, 3), state("a,b", -1))
@@ -358,7 +368,7 @@ func TestLoadErrorReportsThenAdvances(t *testing.T) {
 	a.endFile("error", 1)
 	// The error comes first, while the UI still points at the song that failed.
 	eq(t, "events", waitEvents(t, p, 4), cat([]string{"end-file:error"}, state("a,b*", 1)))
-	eq(t, "commands", a.take(), []string{"loadfile b replace"})
+	eq(t, "commands", a.takeAfter(t, "loadfile b replace"), []string{"loadfile b replace"})
 }
 
 func TestEveryEntryFailingEndsIdle(t *testing.T) {
@@ -613,4 +623,33 @@ func TestReorderUpcomingRejectsADifferentSet(t *testing.T) {
 		t.Error("expected an error")
 	}
 	quiet(t, p)
+}
+
+// setPosFn changes what time-pos reports; safe while the player is running.
+func (d *fakeDeck) setPosFn(fn func() float64) {
+	d.mu.Lock()
+	d.posFn = fn
+	d.mu.Unlock()
+}
+
+// takeAfter waits until a deck has received a command, then returns and
+// forgets the commands so far. The player announces a song before it sends the
+// command to load it, so a test that has seen the events cannot assume the
+// command has arrived.
+func (d *fakeDeck) takeAfter(t *testing.T, cmd string) []string {
+	t.Helper()
+	waitCalls(t, "waiting for "+cmd, d, func(c []string) bool { return has(c, cmd) })
+	return d.take()
+}
+
+// timeOf is when a deck received a command (the first time it did).
+func (d *fakeDeck) timeOf(call string) (time.Time, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i, c := range d.calls {
+		if c == call {
+			return d.times[i], true
+		}
+	}
+	return time.Time{}, false
 }

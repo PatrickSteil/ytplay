@@ -51,6 +51,14 @@ type Player struct {
 	// noPreload is set when the second deck could not be started or died: the
 	// player then runs on one deck and loads every song when its turn comes.
 	noPreload bool
+	// Automatic transitions (see autodj.go).
+	autoDJ   bool
+	analyses Analyses
+	trans    *transition
+	epoch    time.Time  // the time positions are counted from when timing a start
+	speed    [2]float64 // the speed each deck was last set to
+	ease     *easing    // the speed of deck easeDeck is returning to 1
+	easeDeck int
 
 	events    chan mpv.Event
 	done      chan struct{} // closed when the active deck's process exits
@@ -68,7 +76,7 @@ func New(ctx context.Context, start StartDeck) (*Player, error) {
 		return nil, err
 	}
 	p := &Player{
-		start: start, q: queue{pos: -1},
+		start: start, q: queue{pos: -1}, epoch: time.Now(), speed: [2]float64{1, 1},
 		events:  make(chan mpv.Event, 256),
 		done:    make(chan struct{}),
 		stopped: make(chan struct{}),
@@ -131,6 +139,7 @@ func (p *Player) watch(i int, d Deck) {
 					p.noPreload = true // the idle deck is gone
 					if p.pre != nil && p.pre.deck == i {
 						p.pre = nil
+						p.forgetTransition()
 					}
 				}
 				p.mu.Unlock()
@@ -151,6 +160,7 @@ func (p *Player) onDeckEvent(i int, ev mpv.Event) {
 		if p.pre != nil && p.pre.deck == i && ev.Name == "end-file" && ev.Reason == "error" &&
 			(p.pre.entryID == unknownEntry || ev.EntryID == p.pre.entryID) {
 			p.preFailed, p.pre = p.pre.url, nil
+			p.forgetTransition()
 		}
 		return
 	}
@@ -159,6 +169,7 @@ func (p *Player) onDeckEvent(i int, ev mpv.Event) {
 		var paused bool
 		if ev.Property == "pause" && json.Unmarshal(ev.Data, &paused) == nil {
 			p.paused = paused
+			p.forwardPause(paused)
 			p.emit(ev)
 		}
 	case "end-file":
@@ -208,6 +219,7 @@ func (p *Player) playFrom(ctx context.Context, i int) {
 	for ; i < len(p.q.urls); i++ {
 		p.q.pos, p.entryID = i, 0
 		p.emitState() // first, so the UI knows which song a failure is about
+		p.resetSpeed(ctx, p.active)
 		id, err := load(ctx, p.decks[p.active], p.q.urls[i])
 		if err == nil {
 			p.entryID = id
