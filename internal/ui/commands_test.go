@@ -527,7 +527,7 @@ func TestOnlyThePopupsCommandsRunWhileItIsOpen(t *testing.T) {
 // ---- the old letters ----
 
 // deadLetters are the keys that used to do something and are commands now.
-var deadLetters = []string{"s", "d", "q", "r", "h", "D", "X", "Q", "b", "e", "a", "y", "n", "p", "v", "m"}
+var deadLetters = []string{"s", "d", "q", "r", "h", "D", "X", "Q", "b", "e", "a", "y", "n", "p", "v", "m", "l"}
 
 func TestOldLettersDoNothingOutsideTheCommandLine(t *testing.T) {
 	states := map[string]func(t *testing.T) Model{

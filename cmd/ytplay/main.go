@@ -124,6 +124,9 @@ func runTUI(ytdlp, mpvPath string) int {
 			}
 			return analyze.SongWith(ctx, mpvPath, ytdlp, id, duration, o)
 		},
+		Load: func(ctx context.Context, link yt.Link) (yt.Loaded, error) {
+			return yt.LoadLink(ctx, ytdlp, link, yt.MaxPlaylist)
+		},
 		Similar: func(ctx context.Context, seeds []string, exclude map[string]bool, n int) ([]yt.Result, error) {
 			return yt.Similar(ctx, ytdlp, seeds, exclude, n)
 		},

@@ -168,6 +168,15 @@ view.
   one; after the last it starts again at the first. The page is what fits the
   panel, so none is skipped. A failed fetch keeps what is there. Comments are only
   in the wide layout.
+- `:load LINK` (`:l`): adds a YouTube playlist, every song in it, to the queue (the
+  first 500, then "(the first 500)" in the status; private and deleted entries are
+  skipped); a video link queues that one song (`--no-playlist`); a watch link that also
+  carries `list=` counts as the playlist. A link
+  pasted in the `/` bar or after `:find` loads instead of searching. Links are parsed
+  (youtube.com, youtu.be, music.youtube.com, `list=`, watch, shorts, live, embed) and the
+  URL handed to yt-dlp is rebuilt from the parsed id, never the pasted text. One load
+  at a time ("Still loading the last link…"), a failure says why and can be retried,
+  and one undo step brings the queue back.
 - The hints at the bottom right are per state (nothing playing, playing, results,
   queue, search bar, DJ popup, help, the questions, the download popup). A test
   uses every hint in its state and checks that it changes something and that the

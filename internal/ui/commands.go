@@ -33,8 +33,9 @@ type command struct {
 
 // commands are in the order the help popup lists them.
 var commands = []command{
-	{name: "find", short: []string{"f"}, run: cmdFind, usage: ":find NAME", about: "search for NAME (no name: open the search bar)"},
+	{name: "find", short: []string{"f"}, run: cmdFind, usage: ":find NAME", about: "search for NAME, or load a YouTube link (no name: open the bar)"},
 	{name: "add", run: cmdAdd, usage: ":add", about: "add the highlighted result to the queue"},
+	{name: "load", short: []string{"l"}, run: cmdLoad, usage: ":load LINK", about: "add a YouTube playlist (or video) link to the queue"},
 	{name: "play", run: cmdPlay, usage: ":play", about: "play the highlighted song now (Enter does too)"},
 	{name: "skip", short: []string{"s"}, run: cmdSkip, usage: ":skip", about: "skip to the next song"},
 	{name: "prev", short: []string{"p"}, run: cmdPrev, usage: ":prev", about: "the song before (or the start of this one)"},
@@ -230,6 +231,9 @@ func (m Model) runCommandLine(line string) (Model, tea.Cmd) {
 func cmdFind(m Model, arg string) (Model, tea.Cmd) {
 	if arg == "" {
 		return m.openSearch()
+	}
+	if next, cmd, ok := m.loadFromText(arg); ok { // a link is loaded, not searched for
+		return next, cmd
 	}
 	m.input.SetValue(arg)
 	m.input.CursorEnd()

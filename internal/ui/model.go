@@ -86,6 +86,8 @@ type Deps struct {
 	// playing song gets the cheap Light analysis until the DJ popup has been
 	// opened, every song the full one (with beat grids) after that.
 	Analyze func(ctx context.Context, id string, duration float64, level analyze.Level) (analyze.Result, error)
+	// Load lists the songs a YouTube link (a playlist or a video) holds (nil: none).
+	Load func(ctx context.Context, link yt.Link) (yt.Loaded, error)
 	// SetAutoDJ switches the automatic transitions on or off. songs looks up what
 	// the analyses found out about a song by its URL; it may be called from any
 	// goroutine (nil: the player cannot do autodj).
@@ -185,7 +187,8 @@ type Model struct {
 	cmdHistory []string
 	cmdHistPos int
 	cmdDraft   string
-	helpOff    int // how far the help popup is scrolled
+	helpOff    int  // how far the help popup is scrolled
+	loadBusy   bool // a link is being loaded
 	// undo are the upcoming queues before the last edits, newest last; they are
 	// forgotten when the song changes (what is "upcoming" is then another list).
 	undo []undoEntry
@@ -363,6 +366,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case moreCommentsMsg:
 		return m.handleMoreComments(msg)
+
+	case linkLoadedMsg:
+		return m.handleLinkLoaded(msg)
 
 	case analysisMsg:
 		delete(m.queueRunning, msg.id)
@@ -702,6 +708,14 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		q := strings.TrimSpace(m.input.Value())
 		if q == "" {
 			return m, nil
+		}
+		if l := yt.ParseLink(q); l.Kind != yt.NotALink { // a link is loaded, not searched for
+			m.input.Blur()
+			m.mode = modeNormal
+			if len(m.results) > 0 {
+				m.mode = modeResults
+			}
+			return m.startLoad(l)
 		}
 		m.setStickyStatus("Searching…")
 		return m, m.startSearch(q)

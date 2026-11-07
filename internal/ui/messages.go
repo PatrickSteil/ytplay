@@ -64,6 +64,13 @@ type radioDoneMsg struct {
 }
 
 // infoMsg is the result of fetching description, stats and comments.
+// linkLoadedMsg is the answer to loading a YouTube link.
+type linkLoadedMsg struct {
+	link   yt.Link
+	loaded yt.Loaded
+	err    error
+}
+
 // moreCommentsMsg is the answer to a fetch of more comments of a song.
 type moreCommentsMsg struct {
 	id    string

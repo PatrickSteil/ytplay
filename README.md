@@ -50,6 +50,7 @@ the queue after Tab.
 | --- | --- | --- |
 | `:find NAME` | `:f` | search for NAME (without a name: open the search bar) |
 | `:add` | | add the highlighted result to the queue |
+| `:load LINK` | `:l` | add a YouTube playlist link to the queue, every song in it (the first 500; private and deleted videos are skipped); a video link queues that one song (a watch link that carries `list=` counts as the playlist). A link pasted into the `/` search bar or after `:find` does the same instead of searching. It starts playing if nothing is, and `u` undoes it |
 | `:play` | | play the highlighted result or queue entry now (Enter does the same) |
 | `:skip` | `:s` | skip |
 | `:prev` | `:p` | the song before; if this one has played for more than 3 s, its start |
