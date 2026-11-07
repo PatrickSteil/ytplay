@@ -20,8 +20,8 @@ const (
 	minWidthForCover = 60
 	maxQueueRows     = 5 // current entry + queueWindow upcoming ones
 	queueWindow      = maxQueueRows - 1
-	helpText         = "/ search  ⏎ play  q queue  r radio  ⇥ edit  X clear  s skip  0-9 = seek  ␣ pause  Q quit"
-	queueHelpText    = "j/k select  ↑/↓ move  x remove  b sort by BPM  X clear  ⇥/esc back"
+	helpText         = "/ search  ⏎ play  q queue  r radio  ⇥ edit  D dj  X clear  s skip  0-9 = seek  ␣ pause  Q quit"
+	queueHelpText    = "j/k select  ↑/↓ move  x remove  X clear  ⇥/esc back"
 
 	// From this width on the screen is split into three equally wide framed
 	// columns. A third of it must fit the cover plus frame and padding.
@@ -217,15 +217,10 @@ func (m Model) queueRows(w int) []string {
 	}
 	upcoming := m.upcoming()
 	const durW = 8
-	const bpmW = 4 // a space and up to three digits, blank while unknown
-	titleW := max(w-5-durW-1-bpmW, 1)
+	titleW := max(w-5-durW-1, 1)
 	rowFor := func(e playlistEntry) string {
 		title, _, dur := m.entryInfo(e)
-		bpm := strings.Repeat(" ", bpmW)
-		if st := m.stats[yt.VideoID(e.Filename)]; st.hasRes && st.res.BPM > 0 {
-			bpm = fmt.Sprintf(" %3.0f", st.res.BPM)
-		}
-		return fit(safe(title), titleW) + bpm + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
+		return fit(safe(title), titleW) + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
 	}
 	lines := []string{accentB.Render("  ▶  ") + accent.Render(rowFor(*cur))}
 
@@ -342,7 +337,7 @@ func (m Model) View() string {
 	} else {
 		v = m.viewStacked()
 	}
-	if m.mode == modeConfirm || m.mode == modeDownload || m.mode == modeHelp {
+	if m.mode == modeConfirm || m.mode == modeDownload || m.mode == modeHelp || m.mode == modeDJ {
 		v = m.withPopup(v)
 	}
 	return v
@@ -567,17 +562,21 @@ func wrapText(text string, w, maxLines int) []string {
 func (m Model) bpmKeyLine() string {
 	id := m.currentID()
 	st := m.stats[id]
+	bpm := m.tempoOf(id)
 	switch {
-	case id == "" || m.deps.Analyze == nil || st.analysisFailed:
+	case id == "":
 		return ""
-	case !st.hasRes:
+	case !st.hasRes && bpm == 0:
+		if m.deps.Analyze == nil || st.analysisFailed {
+			return ""
+		}
 		return dim.Render("analysing…")
 	}
 	var parts []string
-	if st.res.BPM > 0 {
-		parts = append(parts, fmt.Sprintf("%.0f BPM", st.res.BPM))
+	if bpm > 0 {
+		parts = append(parts, fmt.Sprintf("%.0f BPM", bpm))
 	}
-	if st.res.Key != "" {
+	if st.hasRes && st.res.Key != "" {
 		parts = append(parts, st.res.Key)
 		if st.res.Camelot != "" {
 			parts = append(parts, st.res.Camelot)
@@ -730,6 +729,67 @@ func (m Model) downloadBox() []string {
 	return lines
 }
 
+// djTempo is the tempo column of the DJ popup for a song: its BPM (a * marks
+// one set by hand), … while it is being analysed, – if there is none.
+func (m Model) djTempo(id string) string {
+	st := m.stats[id]
+	switch bpm, set := m.tempoOf(id), m.bpmSet[id] > 0; {
+	case bpm > 0 && set:
+		return fmt.Sprintf("%9s", fmt.Sprintf("%.0f* BPM", bpm))
+	case bpm > 0:
+		return fmt.Sprintf("%9s", fmt.Sprintf("%.0f BPM", bpm))
+	case !st.hasRes && !st.analysisFailed && m.deps.Analyze != nil:
+		return dim.Render(fmt.Sprintf("%9s", "…"))
+	}
+	return dim.Render(fmt.Sprintf("%9s", "–"))
+}
+
+// djBox is the DJ popup: the playing song and the queue with their tempo.
+func (m Model) djBox() []string {
+	w := max(min(76, m.width)-2, 0)
+	row := func(s string) string { return accent.Render("│") + fit(" "+s, w) + accent.Render("│") }
+	title := " DJ "
+	lines := []string{accent.Render("┌") + bold.Render(clip(title, w)) + accent.Render(strings.Repeat("─", max(w-lipgloss.Width(title), 0))+"┐")}
+
+	n := m.djRowCount()
+	if n == 0 {
+		lines = append(lines, row(dim.Render("Nothing playing")))
+	}
+	win := m.djWindow()
+	off := max(min(m.djOff, n-win), 0)
+	if m.djCursor < off {
+		off = m.djCursor
+	}
+	if m.djCursor >= off+win {
+		off = m.djCursor - win + 1
+	}
+	titleW := max(w-1-2-1-9, 1)
+	for r := off; r < min(off+win, n); r++ {
+		e := m.djEntry(r)
+		name, _, _ := m.entryInfo(e)
+		text := fit(safe(name), titleW) + " " + m.djTempo(yt.VideoID(e.Filename))
+		switch {
+		case r == m.djCursor:
+			lines = append(lines, row(accentB.Render("> ")+accentB.Render(ansi.Strip(text))))
+		case r == 0:
+			lines = append(lines, row(accent.Render("▶ ")+text))
+		default:
+			lines = append(lines, row("  "+text))
+		}
+	}
+	if m.djEditing {
+		lines = append(lines, row(m.djInput.View()))
+		if m.djWarn != "" {
+			lines = append(lines, row(accentB.Render(m.djWarn)))
+		} else {
+			lines = append(lines, row(dim.Render("enter set   esc cancel   empty: back to detected")))
+		}
+	} else {
+		lines = append(lines, row(dim.Render("j/k select   e set BPM   b sort by BPM   esc close")))
+	}
+	return append(lines, accent.Render("└"+strings.Repeat("─", w)+"┘"))
+}
+
 // helpBox is the help popup.
 func (m Model) helpBox() []string {
 	w := max(min(70, m.width)-2, 0)
@@ -748,7 +808,7 @@ func (m Model) helpBox() []string {
 		key("d", "save a song to a file (Tab completes the path)"),
 		key("r", "add 20 songs similar to the queue"),
 		key("Tab", "edit queue: j/k select, ↑/↓ move, x remove"),
-		key("b", "in the queue: sort by BPM, again reverses"),
+		key("D", "DJ popup: BPM of the queue, sort by BPM, set a BPM"),
 		key("X", "clear the queue (asks first)"),
 		key("s", "skip"),
 		key("Space", "pause / resume"),
@@ -772,6 +832,9 @@ func (m Model) withPopup(view string) string {
 	}
 	if m.mode == modeHelp {
 		box = m.helpBox()
+	}
+	if m.mode == modeDJ {
+		box = m.djBox()
 	}
 	left := max((m.width-lipgloss.Width(box[0]))/2, 0)
 	top := max((m.height-len(box))/2, 0)

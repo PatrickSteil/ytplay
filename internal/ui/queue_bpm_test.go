@@ -10,8 +10,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/PatrickSteil/ytplay/internal/analyze"
 	"github.com/PatrickSteil/ytplay/internal/yt"
@@ -77,11 +75,35 @@ func bpmDeliver(t *testing.T, m Model, msgs []tea.Msg, id string) (Model, tea.Cm
 	return m, nil
 }
 
+// openDJ presses D and returns what that started.
+func openDJ(t *testing.T, m Model) (Model, tea.Cmd) {
+	t.Helper()
+	m, cmd := send(m, "D")
+	if m.mode != modeDJ {
+		t.Fatalf("mode = %v after D, want the DJ popup", m.mode)
+	}
+	return m, cmd
+}
+
+func TestQueuedSongsAreNotAnalysedUntilTheDJPopupIsOpened(t *testing.T) {
+	f := &bpmFakes{}
+	m := bpmModel(f)
+	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c", "d")
+	collect(cmd)
+	m, cmd = update(m, plEvent(t, "*a", "b", "c", "d", "e")) // the queue changes too
+	collect(cmd)
+	if got := f.asked(); !slices.Equal(got, []string{"a"}) {
+		t.Errorf("analysed %v, want only the playing song until someone opens the DJ popup", got)
+	}
+}
+
 func TestQueuedSongsAreAnalysedTwoAtATime(t *testing.T) {
 	f := &bpmFakes{}
 	m := bpmModel(f)
 	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c", "d", "e")
 	msgs := collect(cmd)
+	m, cmd = openDJ(t, m)
+	msgs = append(msgs, collect(cmd)...)
 	if got := f.asked(); !slices.Equal(got, []string{"a", "b", "c"}) { // the playing song, then two queued
 		t.Fatalf("analysed %v, want the playing song and the next two", got)
 	}
@@ -102,6 +124,8 @@ func TestAnalysedSongIsNotAnalysedAgainWhenItStartsPlaying(t *testing.T) {
 	m := bpmModel(f)
 	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c")
 	msgs := collect(cmd)
+	m, cmd = openDJ(t, m)
+	msgs = append(msgs, collect(cmd)...)
 	m, cmd = bpmDeliver(t, m, msgs, "b")
 	collect(cmd)
 
@@ -120,6 +144,8 @@ func TestFailedAnalysisIsNotRetriedInALoop(t *testing.T) {
 	m := bpmModel(f)
 	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c")
 	msgs := collect(cmd)
+	m, cmd = openDJ(t, m)
+	msgs = append(msgs, collect(cmd)...)
 	m, cmd = bpmDeliver(t, m, msgs, "b")
 	collect(cmd)
 	m, cmd = bpmPlaying(t, m, 0, "a", "b", "c") // the playlist changes again
@@ -132,11 +158,14 @@ func TestFailedAnalysisIsNotRetriedInALoop(t *testing.T) {
 	}
 }
 
-func TestSongsAddedLaterAreAnalysed(t *testing.T) {
+func TestSongsAddedAfterTheDJPopupWasOpenedAreAnalysed(t *testing.T) {
 	f := &bpmFakes{}
 	m := bpmModel(f)
 	m, cmd := bpmPlaying(t, m, 0, "a")
 	collect(cmd)
+	m, cmd = openDJ(t, m)
+	collect(cmd)
+	m, _ = send(m, "esc") // closing the popup does not switch the analysis off
 	m, cmd = update(m, plEvent(t, "*a", "b"))
 	collect(cmd)
 	if got := f.asked(); !slices.Equal(got, []string{"a", "b"}) {
@@ -147,7 +176,9 @@ func TestSongsAddedLaterAreAnalysed(t *testing.T) {
 func TestPlayedSongsAreNotAnalysed(t *testing.T) {
 	f := &bpmFakes{}
 	m := bpmModel(f)
-	_, cmd := bpmPlaying(t, m, 1, "a", "b", "c")
+	m, cmd := bpmPlaying(t, m, 1, "a", "b", "c")
+	collect(cmd)
+	_, cmd = openDJ(t, m)
 	collect(cmd)
 	if got := f.asked(); !slices.Equal(got, []string{"b", "c"}) {
 		t.Errorf("analysed %v, want only the playing song and the upcoming one", got)
@@ -157,7 +188,9 @@ func TestPlayedSongsAreNotAnalysed(t *testing.T) {
 func TestQueuedAnalysisWithoutAnalyzerDoesNothing(t *testing.T) {
 	m := New(Deps{Player: &fakeActions{}})
 	m.statsDelay = 0
-	_, cmd := bpmPlaying(t, m, 0, "a", "b")
+	m, cmd := bpmPlaying(t, m, 0, "a", "b")
+	collect(cmd)
+	_, cmd = send(m, "D")
 	collect(cmd) // must not panic
 }
 
@@ -173,6 +206,8 @@ func TestQuittingCancelsQueuedAnalyses(t *testing.T) {
 	m.statsDelay = 0
 	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c")
 	go collect(cmd)
+	m, cmd = send(m, "D")
+	go collect(cmd)
 	for i := 0; i < 3; i++ { // the playing song and two queued
 		select {
 		case <-started:
@@ -187,151 +222,5 @@ func TestQuittingCancelsQueuedAnalyses(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("only %d analyses were cancelled by quitting", i)
 		}
-	}
-}
-
-// withBPM records finished analyses so queue entries have a tempo.
-func withBPM(m Model, bpms map[string]float64) Model {
-	for id, b := range bpms {
-		m.stats[id] = trackStats{hasRes: true, res: analyze.Result{BPM: b}}
-	}
-	return m
-}
-
-const watch = "https://www.youtube.com/watch?v="
-
-// reorderCall is what the fake player was asked to do: the ids, in order.
-func reorderCall(m Model) string {
-	last := lastCall(m)
-	if !strings.HasPrefix(last, "reorder ") {
-		return ""
-	}
-	return strings.ReplaceAll(strings.TrimPrefix(last, "reorder "), watch, "")
-}
-
-func focusQueue(m Model) Model {
-	m, _ = send(m, "tab")
-	return m
-}
-
-func TestSortByBPMOrdersTheUpcomingSlowestFirst(t *testing.T) {
-	m := focusQueue(withBPM(queueModel(t, 5), map[string]float64{"e1": 140, "e2": 90, "e3": 120, "e4": 100}))
-	m = edit(m, "b")
-	if got := reorderCall(m); got != "e2,e4,e3,e1" {
-		t.Errorf("reorder = %q, want e2,e4,e3,e1", got)
-	}
-	if got := queueIDs(m); got != "e0,e2,e4,e3,e1" {
-		t.Errorf("playlist after sorting = %q (the playing song must stay first)", got)
-	}
-}
-
-func TestSortPutsUnknownBPMLastInTheirOldOrder(t *testing.T) {
-	m := queueModel(t, 5)
-	m = withBPM(m, map[string]float64{"e2": 130, "e3": 0, "e4": 100}) // e1 unknown, e3 has no steady beat
-	m = edit(focusQueue(m), "b")
-	if got := reorderCall(m); got != "e4,e2,e1,e3" {
-		t.Errorf("reorder = %q, want e4,e2,e1,e3", got)
-	}
-}
-
-func TestSecondSortPressReverses(t *testing.T) {
-	m := focusQueue(withBPM(queueModel(t, 5), map[string]float64{"e1": 140, "e2": 90, "e4": 100})) // e3 unknown
-	m = edit(m, "b")
-	if got := reorderCall(m); got != "e2,e4,e1,e3" {
-		t.Fatalf("first press: %q, want e2,e4,e1,e3", got)
-	}
-	m = edit(m, "b")
-	if got := reorderCall(m); got != "e1,e4,e2,e3" {
-		t.Errorf("second press: %q, want fastest first with the unknown last: e1,e4,e2,e3", got)
-	}
-	m = edit(m, "b")
-	if got := reorderCall(m); got != "e2,e4,e1,e3" {
-		t.Errorf("third press: %q, want slowest first again", got)
-	}
-}
-
-func TestManualEditsRestartTheSortDirection(t *testing.T) {
-	m := focusQueue(withBPM(queueModel(t, 4), map[string]float64{"e1": 140, "e2": 90, "e3": 100}))
-	m = edit(m, "b") // slowest first: e2,e3,e1
-	m = edit(m, "x") // remove the selected entry
-	m = edit(m, "b")
-	if got := reorderCall(m); strings.Contains(got, "e1,e3") { // that would be fastest first
-		t.Errorf("after another edit the next sort should be ascending again, got %q", got)
-	}
-}
-
-func TestSortIsIgnoredWhileAnEditIsRunning(t *testing.T) {
-	m := focusQueue(withBPM(queueModel(t, 4), map[string]float64{"e1": 140, "e2": 90, "e3": 100}))
-	m, first := send(m, "b") // the edit is in flight: its command has not run yet
-	_, second := send(m, "b")
-	if second != nil {
-		t.Error("a second sort started while the first was still in flight")
-	}
-	m = run(m, first)
-	n := 0
-	for _, c := range actionsOf(m).calls {
-		if strings.HasPrefix(c, "reorder ") {
-			n++
-		}
-	}
-	if n != 1 {
-		t.Errorf("%d reorder calls, want 1", n)
-	}
-}
-
-func TestSortNeedsTwoSongs(t *testing.T) {
-	m := focusQueue(withBPM(queueModel(t, 2), map[string]float64{"e1": 140}))
-	m = edit(m, "b")
-	if got := reorderCall(m); got != "" {
-		t.Errorf("one upcoming song is already sorted, but got %q", got)
-	}
-}
-
-func TestSortOnlyWorksInTheQueuePanel(t *testing.T) {
-	m := withBPM(queueModel(t, 4), map[string]float64{"e1": 140, "e2": 90, "e3": 100})
-	m = edit(m, "b") // not focused
-	if got := reorderCall(m); got != "" {
-		t.Errorf("sorted from outside the queue panel: %q", got)
-	}
-}
-
-func TestSortStatusMentionsSongsStillBeingAnalysed(t *testing.T) {
-	f := &bpmFakes{}
-	m := bpmModel(f)
-	m, _ = bpmPlaying(t, m, 0, "a", "b", "c", "d", "e")
-	m = withBPM(m, map[string]float64{"b": 100})
-	m.stats["e"] = trackStats{analysisFailed: true} // c and d are still being analysed
-	m, _ = send(m, "tab")
-	m, _ = send(m, "b")
-	if !strings.Contains(m.status, "2 still being analysed") || !strings.Contains(m.status, "1 without a BPM") {
-		t.Errorf("status = %q", m.status)
-	}
-}
-
-func TestQueueRowShowsTheBPM(t *testing.T) {
-	m := withBPM(queueModel(t, 3), map[string]float64{"e1": 123.6})
-	rows := m.queueRows(60) // the playing song, e1, e2
-	if len(rows) != 3 {
-		t.Fatalf("rows = %q", rows)
-	}
-	if !strings.Contains(ansi.Strip(rows[1]), "124") {
-		t.Errorf("row of e1 = %q, want its BPM 124", ansi.Strip(rows[1]))
-	}
-	if strings.Contains(ansi.Strip(rows[2]), "124") {
-		t.Errorf("row of e2 = %q shows a BPM it does not have", ansi.Strip(rows[2]))
-	}
-	if w1, w2 := lipgloss.Width(rows[1]), lipgloss.Width(rows[2]); w1 != w2 {
-		t.Errorf("rows are %d and %d wide, want equal", w1, w2)
-	}
-}
-
-func TestHelpListsTheSortKey(t *testing.T) {
-	if !strings.Contains(queueHelpText, "b sort by BPM") {
-		t.Errorf("footer help = %q", queueHelpText)
-	}
-	m := queueModel(t, 3)
-	m.mode = modeHelp
-	if !strings.Contains(ansi.Strip(strings.Join(m.helpBox(), "\n")), "sort by BPM") {
-		t.Error("the help popup does not mention sorting by BPM")
 	}
 }

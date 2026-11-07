@@ -28,7 +28,11 @@ const (
 	keyRemove     = "x"    // remove the selected queue entry
 	keyShiftUp    = "up"   // move the selected entry up
 	keyShiftDown  = "down" // move the selected entry down
-	keySortBPM    = "b"    // sort the queue by tempo, slowest first; again: fastest first
+
+	// The DJ popup: the queue's tempo, sorting by it, setting it by hand.
+	keyDJ       = "D" // open (and close) the popup
+	keyDJSort   = "b" // sort the queue by tempo, slowest first; again: fastest first
+	keyDJSetBPM = "e" // set the selected song's BPM by hand
 )
 
 // seekPercentForKey maps "0".."9" to 0..90 and keySeekEnd to 100.

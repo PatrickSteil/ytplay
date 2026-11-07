@@ -26,7 +26,8 @@ From a checkout: `make` builds, `make test` tests, `make install` installs to
 | `q` | append the selected result to the queue |
 | `d` | save the selected result (or the playing song) to a file; a popup asks for the path, Tab completes it (needs ffmpeg) |
 | `r` | add 20 songs similar to the queue |
-| Tab | edit the queue: `j` `k` select, `↑` `↓` move, `x` remove, `b` sort by BPM (slowest first, again: fastest first), Tab/Esc back |
+| Tab | edit the queue: `j` `k` select, `↑` `↓` move, `x` remove, Tab/Esc back |
+| `D` | DJ popup: the playing song and the queue with their BPM; `j` `k` select, `b` sort the queue by BPM (slowest first, again: fastest first), `e` set the selected song's BPM by hand (`*`; kept until ytplay quits, empty goes back to the detected one), Esc closes. Queued songs are only analysed once the popup has been opened |
 | `X` | clear the queue (asks first; the playing song keeps going) |
 | `h` | help popup |
 | `s` | skip |
