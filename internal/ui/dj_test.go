@@ -404,11 +404,9 @@ func TestHelpListsTheDJCommand(t *testing.T) {
 			t.Errorf("the help popup does not list %s:\n%s", want, out)
 		}
 	}
-	if strings.Contains(queueHelpText, "BPM") {
-		t.Errorf("the queue panel's help mentions BPM: %q", queueHelpText)
-	}
-	if !strings.Contains(helpText, ":help") {
-		t.Errorf("footer help = %q, want it to point to :help", helpText)
+	q, _ := send(queueModel(t, 3), "tab")
+	if strings.Contains(q.help(), "BPM") {
+		t.Errorf("the queue panel's hints mention BPM: %q", q.help())
 	}
 }
 

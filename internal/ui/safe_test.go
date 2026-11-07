@@ -125,6 +125,7 @@ func TestEmojiCannotBreakTheFrames(t *testing.T) {
 func TestOwnSymbolsAreNotTouched(t *testing.T) {
 	m := queueModel(t, 3)
 	m = at(m, 140, 30)
+	m, _ = send(m, "tab") // the queue is focused: its hints use ⏎ and ⇥
 	m, _ = update(m, positionMsg{elapsed: 5, total: 100})
 	out := ansi.Strip(m.View())
 	for _, want := range []string{"▶", "⏎", "⇥", "│", "┌"} {

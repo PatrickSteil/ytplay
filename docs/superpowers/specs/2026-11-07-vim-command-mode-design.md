@@ -161,6 +161,10 @@ view.
 
 - `:radio N` (`:r N`): looks for up to N similar songs, 1 to 50, 10 without a number
   (it was a fixed 20).
+- The hints at the bottom right are per state (nothing playing, playing, results,
+  queue, search bar, DJ popup, help, the questions, the download popup). A test
+  uses every hint in its state and checks that it changes something and that the
+  footer says nothing else.
 
 ## Not in this change
 

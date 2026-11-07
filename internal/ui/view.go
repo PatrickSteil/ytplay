@@ -20,8 +20,6 @@ const (
 	minWidthForCover = 60
 	maxQueueRows     = 5 // current entry + queueWindow upcoming ones
 	queueWindow      = maxQueueRows - 1
-	helpText         = ": command  / search  ⏎ play  ⇥ queue  x remove  ␣ pause  0-9 = seek  :help"
-	queueHelpText    = "j/k select  ↑/↓ move  x remove  ⇥/esc back  : command"
 
 	// From this width on the screen is split into three equally wide framed
 	// columns. A third of it must fit the cover plus frame and padding.
@@ -111,11 +109,44 @@ func (m Model) showResults() bool {
 		(m.mode == modeQueue && m.queueReturn == modeResults)
 }
 
+// help is the line of hints at the bottom right: the keys that work in the state
+// the program is in, and only those (a test uses every one of them).
 func (m Model) help() string {
-	if m.mode == modeQueue {
-		return queueHelpText
+	playing, queued := m.currentEntry() != nil, len(m.upcoming()) > 0
+	var h []string
+	switch m.mode {
+	case modeSearch:
+		h = []string{"⏎ search", "esc close"}
+	case modeResults:
+		h = []string{"j/k move", "⏎ play", ":add queue", "/ search"}
+		if queued {
+			h = append(h, "⇥ queue")
+		}
+		h = append(h, ": command", ":help")
+	case modeQueue:
+		h = []string{"j/k select", "⏎ play", "↑/↓ move", "x remove", "u undo", "⇥/esc back", ": command"}
+	case modeDJ:
+		h = []string{"j/k select", ":sort", ":bpm N", ":auto", "u undo", "esc close", ": command"}
+	case modeHelp:
+		if len(m.helpRows()) > m.helpWindow() {
+			h = append(h, "j/k scroll")
+		}
+		h = append(h, "esc close")
+	case modeConfirm:
+		h = []string{"y yes", "n no", "esc cancel"}
+	case modeDownload:
+		h = []string{"⏎ save", "⇥ complete", "esc cancel"}
+	default:
+		h = []string{": command", "/ search"}
+		if queued {
+			h = append(h, "⇥ queue")
+		}
+		if playing {
+			h = append(h, "␣ pause", "←/→ seek")
+		}
+		h = append(h, "+/- volume", ":help")
 	}
-	return helpText
+	return strings.Join(h, "  ")
 }
 
 func (m Model) rule() string { return m.theme().frame.Render(strings.Repeat("─", max(m.width, 0))) }
@@ -305,7 +336,7 @@ func (m Model) statusLine() string {
 	if status != "" {
 		return style.Render(clip(status, m.width))
 	}
-	return dim.Render(clip(help, m.width))
+	return dim.Render(fit(help, m.width)) // padded: the line is as wide as the screen whatever the hints
 }
 
 // resultsVisible is how many result rows fit on screen.

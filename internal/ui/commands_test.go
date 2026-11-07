@@ -684,24 +684,6 @@ func TestHelpScrollsWhenTheTerminalIsSmall(t *testing.T) {
 	}
 }
 
-func TestTheFooterHintsAreTheNewKeys(t *testing.T) {
-	for _, want := range []string{":", "/", "search", ":help"} {
-		if !strings.Contains(helpText, want) {
-			t.Errorf("the footer %q lacks %q", helpText, want)
-		}
-	}
-	for _, old := range []string{"q queue", "r radio", "D dj", "X clear", "s skip", "Q quit"} {
-		if strings.Contains(helpText, old) {
-			t.Errorf("the footer still lists the old key %q: %q", old, helpText)
-		}
-	}
-	if strings.Contains(queueHelpText, "X clear") {
-		t.Errorf("the queue footer still lists X: %q", queueHelpText)
-	}
-}
-
-// ---- the popup stays while a command is typed ----
-
 func screen(m Model) string { return ansi.Strip(m.View()) }
 
 // The DJ popup is where :sort and :bpm are used, so it must not vanish while

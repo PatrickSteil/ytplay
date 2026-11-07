@@ -39,7 +39,7 @@ Keys that need no colon:
 | Esc | back out of whatever is open |
 | Ctrl+C | quit |
 
-The other letters do nothing on their own. Press `:`, type a command and press
+The hints at the bottom right always show the keys that work in the state you are in. The other letters do nothing on their own. Press `:`, type a command and press
 Enter; Esc (or Backspace on an empty line) cancels, `↑` `↓` step through the
 commands of this session and Tab completes a name. A command is its name or its
 short form, or the start of its name if that is unambiguous (`:down`, `:fin`).
