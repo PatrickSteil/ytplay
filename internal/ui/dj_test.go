@@ -396,6 +396,7 @@ func TestNowPlayingLineStillShowsTheDetectedBPM(t *testing.T) {
 
 func TestHelpListsTheDJCommand(t *testing.T) {
 	m := queueModel(t, 3)
+	m.height = 100 // the help scrolls on a small terminal; this is about what it says
 	m.mode = modeHelp
 	out := ansi.Strip(strings.Join(m.helpBox(), "\n"))
 	for _, want := range []string{":dj", ":sort", ":bpm", ":auto"} {
@@ -594,7 +595,7 @@ func TestPopupListsTheAutoDJCommand(t *testing.T) {
 	if out := djText(m); !strings.Contains(out, ":auto") {
 		t.Errorf("the popup should list :auto:\n%s", out)
 	}
-	m.mode = modeHelp
+	m.mode, m.height = modeHelp, 100
 	if out := ansi.Strip(strings.Join(m.helpBox(), "\n")); !strings.Contains(out, "autodj") {
 		t.Errorf("the help popup should mention autodj:\n%s", out)
 	}

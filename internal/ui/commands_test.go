@@ -522,7 +522,7 @@ func TestOnlyThePopupsCommandsRunWhileItIsOpen(t *testing.T) {
 // ---- the old letters ----
 
 // deadLetters are the keys that used to do something and are commands now.
-var deadLetters = []string{"s", "d", "q", "r", "h", "D", "X", "Q", "b", "e", "a", "y", "n"}
+var deadLetters = []string{"s", "d", "q", "r", "h", "D", "X", "Q", "b", "e", "a", "y", "n", "p", "v", "m"}
 
 func TestOldLettersDoNothingOutsideTheCommandLine(t *testing.T) {
 	states := map[string]func(t *testing.T) Model{
@@ -697,5 +697,57 @@ func TestTheFooterHintsAreTheNewKeys(t *testing.T) {
 	}
 	if strings.Contains(queueHelpText, "X clear") {
 		t.Errorf("the queue footer still lists X: %q", queueHelpText)
+	}
+}
+
+// ---- the popup stays while a command is typed ----
+
+func screen(m Model) string { return ansi.Strip(m.View()) }
+
+// The DJ popup is where :sort and :bpm are used, so it must not vanish while
+// the command line is open or after a command has run.
+func TestTheDJPopupStaysOnScreenWhileACommandIsTyped(t *testing.T) {
+	m := djModel(t, 4, map[string]float64{"e1": 120, "e2": 90})
+	const popup, row = "┌ DJ", "Title-e2"
+	if s := screen(m); !strings.Contains(s, popup) || !strings.Contains(s, row) {
+		t.Fatalf("setup: the popup is not on screen:\n%s", s)
+	}
+	m, _ = send(m, ":")
+	if s := screen(m); !strings.Contains(s, popup) || !strings.Contains(s, row) {
+		t.Errorf("the popup vanished when the command line opened:\n%s", s)
+	}
+	for _, k := range []string{"s", "o", "r", "t"} {
+		m, _ = send(m, k)
+		if s := screen(m); !strings.Contains(s, popup) {
+			t.Errorf("the popup vanished while typing (after %q):\n%s", k, s)
+		}
+	}
+	if s := screen(m); !strings.Contains(s, ":sort") {
+		t.Errorf("the command line is not shown under the popup:\n%s", s)
+	}
+	m, cmd := send(m, "enter")
+	m = run(m, cmd)
+	if s := screen(m); !strings.Contains(s, popup) || m.mode != modeDJ {
+		t.Errorf("the popup is gone after :sort (mode %v):\n%s", m.mode, s)
+	}
+	// a second command straight after, and one that is cancelled
+	m, _ = typeCommand(m, "bpm 100")
+	if s := screen(m); !strings.Contains(s, popup) || m.mode != modeDJ {
+		t.Errorf("the popup is gone after :bpm (mode %v):\n%s", m.mode, s)
+	}
+	m, _ = send(m, ":", "b", "esc")
+	if s := screen(m); !strings.Contains(s, popup) || m.mode != modeDJ {
+		t.Errorf("the popup is gone after cancelling a command (mode %v):\n%s", m.mode, s)
+	}
+}
+
+// Popups that only ask or explain are not shown under the command line (it
+// cannot be opened from them), and without a popup none is drawn.
+func TestNoPopupIsDrawnUnderTheCommandLineWithoutOne(t *testing.T) {
+	m, _ := send(queueModel(t, 3), ":")
+	for _, title := range []string{"┌ DJ", "┌ ytplay help", "┌ Clear"} {
+		if s := screen(m); strings.Contains(s, title) {
+			t.Errorf("%q is drawn although no popup is open:\n%s", title, s)
+		}
 	}
 }

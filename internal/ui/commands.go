@@ -3,7 +3,9 @@ package ui
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"slices"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,15 +35,22 @@ type command struct {
 var commands = []command{
 	{name: "find", short: []string{"f"}, run: cmdFind, usage: ":find NAME", about: "search for NAME (no name: open the search bar)"},
 	{name: "add", run: cmdAdd, usage: ":add", about: "add the highlighted result to the queue"},
+	{name: "play", run: cmdPlay, usage: ":play", about: "play the highlighted song now (Enter does too)"},
 	{name: "skip", short: []string{"s"}, run: cmdSkip, usage: ":skip", about: "skip to the next song"},
+	{name: "prev", short: []string{"p"}, run: cmdPrev, usage: ":prev", about: "the song before (or the start of this one)"},
+	{name: "seek", run: cmdSeek, usage: ":seek TIME", about: "to 1:30, 90 (seconds), 50%, or by +10 / -30 (also \u2190 \u2192)"},
+	{name: "vol", short: []string{"v"}, run: cmdVol, inPopup: true, usage: ":vol N", about: "volume 0-100, or +N / -N (also the keys + -)"},
+	{name: "mute", short: []string{"m"}, run: cmdMute, inPopup: true, usage: ":mute", about: "mute or unmute"},
 	{name: "delete", short: []string{"x"}, run: cmdDelete, usage: ":delete", about: "remove the highlighted queue entry (or x)"},
+	{name: "undo", short: []string{"u"}, run: cmdUndo, inPopup: true, usage: ":undo", about: "undo the last queue change (also the key u)"},
+	{name: "shuffle", run: cmdShuffle, inPopup: true, usage: ":shuffle", about: "shuffle the queue"},
 	{name: "download", short: []string{"d"}, run: cmdDownload, usage: ":download", about: "save the highlighted song to a file"},
+	{name: "radio", short: []string{"r"}, run: cmdRadio, usage: ":radio", about: "add 20 songs similar to the queue"},
+	{name: "clear", short: []string{"X"}, run: cmdClear, usage: ":clear", about: "clear the queue (asks first)"},
 	{name: "auto", short: []string{"a"}, run: cmdAuto, inPopup: true, usage: ":auto", about: "autodj on or off (the next song mixes in early)"},
 	{name: "dj", run: cmdDJ, inPopup: true, usage: ":dj", about: "the DJ popup: the queue with its BPM"},
 	{name: "sort", short: []string{"b"}, run: cmdSort, inPopup: true, usage: ":sort", about: "DJ popup: sort the queue by BPM (again: reverse)"},
 	{name: "bpm", short: []string{"e"}, run: cmdBPM, inPopup: true, usage: ":bpm N", about: "DJ popup: set a song's BPM (alone: the detected one)"},
-	{name: "radio", short: []string{"r"}, run: cmdRadio, usage: ":radio", about: "add 20 songs similar to the queue"},
-	{name: "clear", short: []string{"X"}, run: cmdClear, usage: ":clear", about: "clear the queue (asks first)"},
 	{name: "help", short: []string{"h"}, run: cmdHelp, inPopup: true, usage: ":help", about: "this help"},
 	{name: "quit", short: []string{"q"}, run: cmdQuit, inPopup: true, usage: ":quit", about: "quit (Ctrl+C too)"},
 }
@@ -318,4 +327,180 @@ func cmdHelp(m Model, _ string) (Model, tea.Cmd) {
 func cmdQuit(m Model, _ string) (Model, tea.Cmd) {
 	quit := m.quit()
 	return m, quit
+}
+
+// ---- seek, previous, play ----
+
+type seekKind int
+
+const (
+	seekAbsolute seekKind = iota // to a time
+	seekRelative                 // by a number of seconds
+	seekPercent                  // to a whole percent
+)
+
+const seekUsage = "Seek to a time (1:30 or 90), a percent (50%) or by seconds (+10, -30)"
+
+// parseSeek reads what :seek is given: "90" or "1:30" or "1:02:03" (a time),
+// "50%" (a whole percent), "+10" or "-1:30" (a number of seconds either way).
+func parseSeek(arg string) (kind seekKind, v float64, warn string) {
+	arg = strings.TrimSpace(arg)
+	if p, ok := strings.CutSuffix(arg, "%"); ok {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 100 {
+			return 0, 0, "A percent is a whole number from 0 to 100"
+		}
+		return seekPercent, float64(n), ""
+	}
+	kind, sign := seekAbsolute, 1.0
+	switch {
+	case strings.HasPrefix(arg, "+"):
+		kind, arg = seekRelative, arg[1:]
+	case strings.HasPrefix(arg, "-"):
+		kind, sign, arg = seekRelative, -1, arg[1:]
+	}
+	secs, ok := parseClock(arg)
+	if !ok {
+		return 0, 0, seekUsage
+	}
+	return kind, sign * secs, ""
+}
+
+// parseClock reads seconds, m:ss or h:mm:ss; the seconds may have decimals.
+func parseClock(s string) (float64, bool) {
+	parts := strings.Split(s, ":")
+	if len(parts) > 3 {
+		return 0, false
+	}
+	var total float64
+	for i, part := range parts {
+		digits := strings.Count(part, ".") <= 1 && strings.Trim(part, "0123456789.") == "" && strings.Trim(part, ".") != ""
+		if !digits || (i < len(parts)-1 && strings.Contains(part, ".")) {
+			return 0, false
+		}
+		n, err := strconv.ParseFloat(part, 64)
+		if err != nil || (i > 0 && n >= 60) {
+			return 0, false
+		}
+		total = total*60 + n
+	}
+	return total, true
+}
+
+func cmdSeek(m Model, arg string) (Model, tea.Cmd) {
+	kind, v, warn := parseSeek(arg)
+	if warn != "" {
+		status := m.setStatus(warn, true)
+		return m, status
+	}
+	if m.currentEntry() == nil {
+		status := m.setStatus("Nothing is playing", false)
+		return m, status
+	}
+	p := m.deps.Player
+	var seek func(ctx context.Context) error
+	var said string
+	switch kind {
+	case seekAbsolute:
+		seek, said = func(ctx context.Context) error { return p.SeekTo(ctx, v) }, "Seek to "+formatClock(v)
+	case seekRelative:
+		seek, said = func(ctx context.Context) error { return p.SeekBy(ctx, v) }, fmt.Sprintf("Seek %+g s", v)
+	default:
+		seek, said = func(ctx context.Context) error { return p.SeekPercent(ctx, int(v)) }, fmt.Sprintf("Seek to %d%%", int(v))
+	}
+	do, say := m.action(true, seek), m.setStatus(said, false)
+	return m, tea.Batch(do, say)
+}
+
+func cmdPrev(m Model, _ string) (Model, tea.Cmd) {
+	if m.currentEntry() == nil {
+		status := m.setStatus("Nothing is playing", false)
+		return m, status
+	}
+	p := m.deps.Player
+	return m, m.action(false, func(ctx context.Context) error { return p.Prev(ctx) })
+}
+
+func cmdPlay(m Model, _ string) (Model, tea.Cmd) {
+	switch {
+	case m.mode == modeResults && len(m.results) > 0:
+		return m.playSelected()
+	case m.mode == modeQueue && len(m.upcoming()) > 0:
+		return m.playQueueEntry()
+	}
+	status := m.setStatus("Nothing highlighted: search first, or press Tab for the queue", false)
+	return m, status
+}
+
+// ---- undo and shuffle ----
+
+func cmdUndo(m Model, _ string) (Model, tea.Cmd) { return m.undoQueue() }
+
+// shufflePerm is a random order of 0..n-1 (a variable so tests can fix it).
+var shufflePerm = rand.Perm
+
+func cmdShuffle(m Model, _ string) (Model, tea.Cmd) {
+	up := m.upcoming()
+	if len(up) < 2 {
+		status := m.setStatus("Nothing to shuffle", false)
+		return m, status
+	}
+	if m.queueBusy {
+		return m, nil
+	}
+	m.rememberQueue("shuffle")
+	pl := slices.Clone(m.playlist)
+	urls := make([]string, len(up))
+	base := m.pos + 1
+	for k, i := range shufflePerm(len(up)) {
+		pl[base+k] = m.playlist[base+i]
+		urls[k] = pl[base+k].Filename
+	}
+	m.playlist, m.sortDesc = pl, false
+	m.clampDJ()
+	m.queueBusy = true
+	p := m.deps.Player
+	reorder := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		defer cancel()
+		return queueEditDoneMsg{err: p.ReorderUpcoming(ctx, urls)}
+	}
+	status := m.setStatus("Shuffled the queue", false)
+	return m, tea.Batch(reorder, status)
+}
+
+// ---- volume ----
+
+func cmdVol(m Model, arg string) (Model, tea.Cmd) {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		text := "Volume " + strconv.FormatFloat(m.volume, 'f', -1, 64) + "%"
+		if m.muted {
+			text = "Muted (volume " + strconv.FormatFloat(m.volume, 'f', -1, 64) + "%)"
+		}
+		status := m.setStatus(text, false)
+		return m, status
+	}
+	rel := strings.HasPrefix(arg, "+") || strings.HasPrefix(arg, "-")
+	digits := strings.TrimLeft(arg, "+-")
+	n, err := strconv.ParseFloat(digits, 64)
+	if err != nil || strings.Trim(digits, "0123456789.") != "" || (!rel && len(digits) != len(arg)) || n < 0 || (!rel && n > 100) {
+		status := m.setStatus("Volume is a number from 0 to 100, or +N / -N", true)
+		return m, status
+	}
+	if rel {
+		if strings.HasPrefix(arg, "-") {
+			n = -n
+		}
+		return m.changeVolume(n)
+	}
+	return m.setVolume(n)
+}
+
+func cmdMute(m Model, _ string) (Model, tea.Cmd) {
+	m.muted = !m.muted
+	if !m.muted {
+		return m.sendVolume("Volume " + strconv.FormatFloat(m.volume, 'f', -1, 64) + "%")
+	}
+	return m.sendVolume("Muted")
 }

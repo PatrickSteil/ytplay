@@ -366,10 +366,20 @@ func (m Model) View() string {
 	} else {
 		v = m.viewStacked()
 	}
-	if m.mode == modeConfirm || m.mode == modeDownload || m.mode == modeHelp || m.mode == modeDJ {
+	switch m.popupMode() {
+	case modeConfirm, modeDownload, modeHelp, modeDJ:
 		v = m.withPopup(v)
 	}
 	return v
+}
+
+// popupMode is the state whose popup is on screen. The command line opened over
+// the DJ popup does not take it away: :sort and :bpm are typed there.
+func (m Model) popupMode() mode {
+	if m.mode == modeCommand {
+		return m.cmdFrom
+	}
+	return m.mode
 }
 
 func (m Model) viewStacked() string {
@@ -832,11 +842,15 @@ func (m Model) helpRows() []string {
 		bold.Render("Keys"),
 		key("/", "search bar (Enter runs it, Esc closes it)"),
 		key("j / k", "move in the results, the queue and the DJ popup"),
-		key("Enter", "play the highlighted result now"),
+		key("Enter", "play the highlighted result or queue entry now"),
 		key("Tab", "switch between the results and the queue"),
 		key("x", "remove the highlighted queue entry"),
-		key("↑ / ↓", "move the highlighted queue entry"),
+		key("↑ / ↓", "move the highlighted queue entry (or J / K)"),
+		key("J / K", "move the highlighted queue entry down / up"),
+		key("u", "undo the last queue change"),
 		key("Space", "pause / resume"),
+		key("← / →", "seek 5 seconds back / forward"),
+		key("+ / -", "volume up / down"),
 		key("0-9, =", "seek to 0%-90%, 100%"),
 		key("Ctrl+C", "quit"),
 		key("Esc", "back out of whatever is open"),
@@ -880,13 +894,12 @@ func (m Model) helpBox() []string {
 
 func (m Model) withPopup(view string) string {
 	box := m.confirmBox()
-	if m.mode == modeDownload {
+	switch m.popupMode() {
+	case modeDownload:
 		box = m.downloadBox()
-	}
-	if m.mode == modeHelp {
+	case modeHelp:
 		box = m.helpBox()
-	}
-	if m.mode == modeDJ {
+	case modeDJ:
 		box = m.djBox()
 	}
 	left := max((m.width-lipgloss.Width(box[0]))/2, 0)

@@ -13,6 +13,12 @@ const (
 	keyUp      = "k"
 	keySeekEnd = "=" // Shift+0 on a German keyboard
 
+	keyLeft    = "left"  // seek back
+	keyRight   = "right" // seek forward
+	keyUndo    = "u"     // undo the last queue change
+	keyVolUp   = "+"
+	keyVolDown = "-"
+
 	keyComplete = "tab" // completes the path in the download popup and a command name in the command line
 	keyConfirm  = "y"   // confirm in the yes/no popup
 	keyDeny     = "n"   // decline in the yes/no popup (Esc too)
@@ -22,6 +28,8 @@ const (
 	keyRemove     = "x"    // remove the selected queue entry (like :delete)
 	keyShiftUp    = "up"   // move the selected entry up
 	keyShiftDown  = "down" // move the selected entry down
+	keyMoveUp     = "K"    // like keyShiftUp
+	keyMoveDown   = "J"    // like keyShiftDown
 
 	// The command line itself.
 	keyBackspace = "backspace"

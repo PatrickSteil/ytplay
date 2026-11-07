@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,7 +44,14 @@ type Actions interface {
 	Queue(ctx context.Context, url string) error
 	PlayNow(ctx context.Context, url string) error
 	Skip(ctx context.Context) error
+	// Prev goes back: to the song before, or to the start of the playing one.
+	Prev(ctx context.Context) error
 	SeekPercent(ctx context.Context, n int) error
+	// SeekTo seeks to a time in the playing song, SeekBy by a number of seconds.
+	SeekTo(ctx context.Context, seconds float64) error
+	SeekBy(ctx context.Context, seconds float64) error
+	// SetVolume sets the volume, 0 to 100 percent of full.
+	SetVolume(ctx context.Context, percent float64) error
 	TogglePause(ctx context.Context) error
 	QueueMany(ctx context.Context, urls []string) error
 	ClearQueue(ctx context.Context) error
@@ -52,6 +61,9 @@ type Actions interface {
 	// ReorderUpcoming puts the songs after the playing one in the given
 	// order; urls must be exactly the upcoming songs.
 	ReorderUpcoming(ctx context.Context, urls []string) error
+	// SetUpcoming replaces the songs after the playing one, to bring back an
+	// older queue (undo).
+	SetUpcoming(ctx context.Context, urls []string) error
 }
 
 // Deps are the things the UI calls out to.
@@ -168,6 +180,12 @@ type Model struct {
 	cmdHistPos int
 	cmdDraft   string
 	helpOff    int // how far the help popup is scrolled
+	// undo are the upcoming queues before the last edits, newest last; they are
+	// forgotten when the song changes (what is "upcoming" is then another list).
+	undo []undoEntry
+	// volume is the level the user chose (percent); muted sends 0 instead of it.
+	volume float64
+	muted  bool
 	// bpmSet is the BPM the user set by hand, by video ID. It wins over the
 	// detected one and lasts until ytplay quits.
 	bpmSet map[string]float64
@@ -218,7 +236,7 @@ func New(d Deps) Model {
 		queueRunning: map[string]bool{}, queueCtx: queueCtx, queueCancel: queueCancel,
 		tracks: map[string]yt.Result{}, pos: -1, idle: true,
 		covers: map[string]string{}, coverAsked: map[string]bool{},
-		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{}, fullAsked: map[string]bool{},
+		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{}, fullAsked: map[string]bool{}, volume: 100,
 		statsDelay: statsDelay,
 	}
 }
@@ -424,6 +442,7 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 	queued := m.startQueuedAnalyses()
 	if cur := m.currentID(); cur != prev {
 		m.elapsed, m.total = 0, 0
+		m.undo = nil
 		m.loading = cur != ""
 		return m, tea.Batch(m.fetchCover(cur), m.fetchStats(cur), queued)
 	}
@@ -757,13 +776,8 @@ func (m Model) handleResultsKey(k string) (Model, tea.Cmd, bool) {
 		if len(m.results) == 0 {
 			return m, nil, true
 		}
-		r := m.results[m.selected]
-		m.tracks[r.ID] = r
-		url, p := r.URL(), m.deps.Player
-		return m, tea.Batch(
-			m.action(false, func(ctx context.Context) error { return p.PlayNow(ctx, url) }),
-			m.setStatus("Playing: "+r.Title, false),
-		), true
+		next, cmd := m.playSelected()
+		return next, cmd, true
 	case keyEsc:
 		m.mode = modeNormal
 		return m, nil, true
@@ -783,6 +797,9 @@ func (m Model) openSearch() (Model, tea.Cmd) {
 
 // queueSelected appends the selected result to the queue. There must be one.
 func (m Model) queueSelected() (Model, tea.Cmd) {
+	if m.currentEntry() != nil {
+		m.rememberQueue("addition")
+	}
 	r := m.results[m.selected]
 	m.tracks[r.ID] = r
 	url, p := r.URL(), m.deps.Player
@@ -816,6 +833,14 @@ func (m Model) handleGlobalKey(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case keySearch:
 		return m.openSearch()
+	case keyLeft, keyRight:
+		return m.seekKey(k)
+	case keyUndo:
+		return m.undoQueue()
+	case keyVolUp:
+		return m.changeVolume(volStep)
+	case keyVolDown:
+		return m.changeVolume(-volStep)
 	case keyQueueFocus:
 		if len(m.upcoming()) == 0 {
 			return m, m.setStatus("Queue is empty", false)
@@ -888,6 +913,15 @@ func (m *Model) scrollQueue() {
 func (m Model) handleQueueKey(k string) (Model, tea.Cmd, bool) {
 	n := len(m.upcoming())
 	switch k {
+	case keyMoveDown:
+		k = keyShiftDown
+	case keyMoveUp:
+		k = keyShiftUp
+	}
+	switch k {
+	case keyEnter:
+		next, cmd := m.playQueueEntry()
+		return next, cmd, true
 	case keyQueueFocus, keyEsc:
 		m.mode = m.queueReturn
 		return m, nil, true
@@ -906,6 +940,11 @@ func (m Model) handleQueueKey(k string) (Model, tea.Cmd, bool) {
 	}
 	if m.queueBusy || n == 0 {
 		return m, nil, true
+	}
+	if k == keyRemove {
+		m.rememberQueue("removal")
+	} else {
+		m.rememberQueue("move")
 	}
 	m.sortDesc = false               // a hand edit starts the next sort from the slowest again
 	idx := m.pos + 1 + m.queueCursor // mpv playlist index of the selection
@@ -951,6 +990,127 @@ func (m Model) handleQueueKey(k string) (Model, tea.Cmd, bool) {
 		cmds = append(cmds, m.setStatus(status, false))
 	}
 	return m, tea.Batch(cmds...), true
+}
+
+// seekStep and volStep are what the arrow keys and + - move by.
+const (
+	seekStep = 5.0 // seconds
+	volStep  = 5.0 // percent
+)
+
+// undoDepth is how many queue edits can be undone.
+const undoDepth = 20
+
+// undoEntry is the upcoming queue as it was before an edit.
+type undoEntry struct {
+	what    string // what the edit was, for the status line
+	entries []playlistEntry
+}
+
+// rememberQueue remembers the upcoming queue before an edit, so :undo can bring
+// it back.
+func (m *Model) rememberQueue(what string) {
+	e := undoEntry{what: what, entries: slices.Clone(m.upcoming())}
+	m.undo = append(slices.Clone(m.undo), e)
+	if len(m.undo) > undoDepth {
+		m.undo = m.undo[len(m.undo)-undoDepth:]
+	}
+}
+
+// undoQueue brings back the upcoming queue from before the last edit.
+func (m Model) undoQueue() (Model, tea.Cmd) {
+	if m.queueBusy {
+		return m, nil // an edit is still on its way
+	}
+	n := len(m.undo)
+	if n == 0 || m.currentEntry() == nil {
+		status := m.setStatus("Nothing to undo", false)
+		return m, status
+	}
+	e := m.undo[n-1]
+	m.undo = slices.Clone(m.undo[:n-1])
+	m.playlist = append(slices.Clone(m.playlist[:m.pos+1]), e.entries...)
+	m.sortDesc = false // the next sort starts from the slowest again
+	m.clampQueue()
+	m.clampDJ()
+	m.queueBusy = true
+	urls := make([]string, len(e.entries))
+	for i, entry := range e.entries {
+		urls[i] = entry.Filename
+	}
+	p := m.deps.Player
+	restore := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+		defer cancel()
+		return queueEditDoneMsg{err: p.SetUpcoming(ctx, urls)}
+	}
+	status := m.setStatus("Undid the "+e.what, false)
+	return m, tea.Batch(restore, status)
+}
+
+// playSelected plays the selected result now. There must be one.
+func (m Model) playSelected() (Model, tea.Cmd) {
+	r := m.results[m.selected]
+	m.tracks[r.ID] = r
+	url, p := r.URL(), m.deps.Player
+	return m, tea.Batch(
+		m.action(false, func(ctx context.Context) error { return p.PlayNow(ctx, url) }),
+		m.setStatus("Playing: "+r.Title, false),
+	)
+}
+
+// playQueueEntry plays the highlighted queue entry now: it leaves its place and
+// the songs around it keep their order.
+func (m Model) playQueueEntry() (Model, tea.Cmd) {
+	up := m.upcoming()
+	if m.queueBusy || len(up) == 0 {
+		return m, nil
+	}
+	idx := m.pos + 1 + min(m.queueCursor, len(up)-1)
+	e := m.playlist[idx]
+	title, _, _ := m.entryInfo(e)
+	url, p := e.Filename, m.deps.Player
+	return m, tea.Batch(
+		m.action(false, func(ctx context.Context) error {
+			if err := p.Remove(ctx, idx); err != nil {
+				return err
+			}
+			return p.PlayNow(ctx, url)
+		}),
+		m.setStatus("Playing: "+safe(title), false),
+	)
+}
+
+// seekKey is the left and right arrows: seek seekStep seconds back or forward.
+func (m Model) seekKey(k string) (Model, tea.Cmd) {
+	d := seekStep
+	if k == keyLeft {
+		d = -seekStep
+	}
+	p := m.deps.Player
+	return m, m.action(true, func(ctx context.Context) error { return p.SeekBy(ctx, d) })
+}
+
+// setVolume sets the volume and says so. The level is what the user chose;
+// setting one ends a mute.
+func (m Model) setVolume(v float64) (Model, tea.Cmd) {
+	m.volume, m.muted = math.Max(0, math.Min(v, 100)), false
+	return m.sendVolume("Volume " + strconv.FormatFloat(m.volume, 'f', -1, 64) + "%")
+}
+
+// changeVolume moves the volume by delta percent.
+func (m Model) changeVolume(delta float64) (Model, tea.Cmd) { return m.setVolume(m.volume + delta) }
+
+// sendVolume tells the player the volume that is in effect (0 when muted).
+func (m Model) sendVolume(status string) (Model, tea.Cmd) {
+	v := m.volume
+	if m.muted {
+		v = 0
+	}
+	p := m.deps.Player
+	set := m.action(false, func(ctx context.Context) error { return p.SetVolume(ctx, v) })
+	say := m.setStatus(status, false)
+	return m, tea.Batch(set, say)
 }
 
 // tempoOf is the BPM used for a song: the one the user set, else the detected
@@ -1026,6 +1186,12 @@ func (m Model) handleDJKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyUp, keyShiftUp:
 		m.djCursor = max(m.djCursor-1, 0)
 		m.scrollDJ()
+	case keyUndo:
+		return m.undoQueue()
+	case keyVolUp:
+		return m.changeVolume(volStep)
+	case keyVolDown:
+		return m.changeVolume(-volStep)
 	}
 	return m, nil
 }
@@ -1117,6 +1283,7 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	if m.queueBusy || len(up) < 2 {
 		return m, nil
 	}
+	m.rememberQueue("sort")
 	type item struct {
 		idx int
 		bpm float64
@@ -1250,6 +1417,9 @@ func (m Model) handleRadioDone(msg radioDoneMsg) (Model, tea.Cmd) {
 		m.tracks[r.ID] = r
 		urls[i] = r.URL()
 	}
+	if m.currentEntry() != nil {
+		m.rememberQueue("radio")
+	}
 	p := m.deps.Player
 	return m, tea.Batch(
 		m.action(false, func(ctx context.Context) error { return p.QueueMany(ctx, urls) }),
@@ -1269,6 +1439,7 @@ func (m Model) handleConfirmKey(k string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// mpv keeps the playing entry; show that right away, events confirm it.
+		m.rememberQueue("clearing of the queue")
 		m.playlist, m.pos = []playlistEntry{*cur}, 0
 		m.clampQueue()
 		p := m.deps.Player

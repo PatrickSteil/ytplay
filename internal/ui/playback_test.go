@@ -28,6 +28,19 @@ func (f *fakeActions) PlayNow(ctx context.Context, url string) error {
 	return f.rec("playnow " + url)
 }
 func (f *fakeActions) Skip(ctx context.Context) error { return f.rec("skip") }
+func (f *fakeActions) Prev(ctx context.Context) error { return f.rec("prev") }
+func (f *fakeActions) SeekTo(ctx context.Context, s float64) error {
+	return f.rec(fmt.Sprintf("seekto %v", s))
+}
+func (f *fakeActions) SeekBy(ctx context.Context, s float64) error {
+	return f.rec(fmt.Sprintf("seekby %v", s))
+}
+func (f *fakeActions) SetUpcoming(ctx context.Context, urls []string) error {
+	return f.rec("setupcoming " + strings.Join(urls, ","))
+}
+func (f *fakeActions) SetVolume(ctx context.Context, v float64) error {
+	return f.rec(fmt.Sprintf("volume %v", v))
+}
 func (f *fakeActions) SeekPercent(ctx context.Context, n int) error {
 	f.rec(fmt.Sprintf("seek %d", n))
 	return f.seekErr

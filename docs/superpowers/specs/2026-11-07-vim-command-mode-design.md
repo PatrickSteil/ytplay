@@ -128,12 +128,40 @@ mode (`modeCommand`) holds the line, its history and the mode to return to.
 - The existing key tests (about 150 key presses in 16 files) are converted to
   commands, not deleted: each keeps the behaviour it checks.
 
+## Added afterwards (the user: "add useful keywords")
+
+New player calls: `SeekTo`, `SeekBy`, `Prev`, `SetUpcoming` (replace the songs
+after the playing one: what undo needs, `ReorderUpcoming` cannot bring a deleted
+song back) and a master volume that scales every volume the engine sets, so a
+crossfade at volume 50 ramps between 0 and 50, ends at 50, and a deck started
+later starts at 50.
+
+| Command | Short | Does |
+| --- | --- | --- |
+| `:play` | | plays the highlighted result or queue entry now (the entry leaves its place) |
+| `:prev` | `:p` | the song before; the start of this one after 3 s |
+| `:seek TIME` | | `1:30`, `90`, `50%`, `+10`, `-30` |
+| `:vol N` | `:v` | 0 to 100, `+N`, `-N`; alone: says it |
+| `:mute` | `:m` | mute or unmute |
+| `:undo` | `:u` | undo a queue edit |
+| `:shuffle` | | shuffles the queue |
+
+Keys: `u` undo, `←` `→` seek 5 s, `+` `-` volume 5%, `J` `K` move the queue entry,
+Enter plays the highlighted queue entry. Undo remembers the queue before each
+removal, move, sort, shuffle, clearing, addition and radio (20 deep) and forgets
+it when the song changes; the volume, mute, undo and shuffle commands also run
+inside the DJ popup. *My calls:* undo is a direct key because it is vim's, and
+`←` `→` and `+` `-` because they are not letters.
+
+**The DJ popup stays on screen while a command is typed over it** (it used to
+vanish until Enter): `:sort`, `:bpm 128` and the rest are used with the popup in
+view.
+
 ## Not in this change
 
-Offered and not decided by the user: `:seek 1:30`, a volume control (`:vol`, `+`
-`-`; there is none today), `:prev`, undo (`u`) for queue edits, counts (`5j`) and
-`gg`/`G`, moving queue entries with `J`/`K`, `:h COMMAND`, a mode indicator.
-Remappable keys; a config file for aliases.
+Counts (`5j`: the digits seek), `gg`/`G`, `:h COMMAND`, a mode indicator.
+Remappable keys; a config file for aliases. (`:seek`, volume, `:prev`, undo and
+`J`/`K` were offered and are built, see below.)
 
 ## Risks
 
