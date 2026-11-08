@@ -71,6 +71,7 @@ the queue after Tab.
 | `:help` | `:h` | help popup (`j` `k` scroll on a small terminal) |
 | `:quit` | `:q` | quit |
 
+The playing song's key (in the line under its title) and its row in the queue are drawn in the colour of its Camelot key.
 A search looks at YouTube and SoundCloud at the same time (10 results each, interleaved), and a
 coloured dot in front of every song says where it is from: red for YouTube, orange for SoundCloud (also in the queue and
 the DJ popup). If one of them fails the other's results are shown and the status says which failed. Cover, description,

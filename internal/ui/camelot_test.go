@@ -2,6 +2,7 @@ package ui
 
 import (
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,5 +61,49 @@ func TestCamelotHuesAreSpreadOverTheCircleAndAMissingKeyIsBlank(t *testing.T) {
 	}
 	if got := queueModel(t, 2).djKey("unknown"); got != "    " {
 		t.Errorf("key of an unanalysed song = %q, want four blanks", got)
+	}
+}
+
+func TestThePlayingSongsKeyIsInItsColourInTheNowPlayingLine(t *testing.T) {
+	withColours(t)
+	m := playingModel(t, false, 140)
+	m.stats["e0"] = trackStats{hasRes: true, res: analyze.Result{BPM: 120, Key: "F# minor", Camelot: "11A"}}
+	line := m.bpmKeyLine()
+	if !strings.Contains(line, camelotStyle("11A").Render("F# minor · 11A")) {
+		t.Errorf("the key is not in the colour of 11A:\n%q", line)
+	}
+	if !strings.Contains(ansi.Strip(line), "120 BPM · F# minor · 11A") {
+		t.Errorf("the text changed: %q", ansi.Strip(line))
+	}
+	m.stats["e0"] = trackStats{hasRes: true, res: analyze.Result{BPM: 120}} // no key: nothing coloured by it
+	if strings.Contains(m.bpmKeyLine(), "\x1b[38;2;") && strings.Contains(m.bpmKeyLine(), camelotStyle("11A").Render("1")) {
+		t.Error("a song without a key got a key colour")
+	}
+}
+
+func TestThePlayingSongsRowInTheQueueIsInItsKeysColour(t *testing.T) {
+	withColours(t)
+	m := at(queueModel(t, 3), 140, 30)
+	m.stats["e0"] = trackStats{hasRes: true, res: analyze.Result{BPM: 120, Camelot: "11A"}}
+	open := strings.TrimSuffix(camelotStyle("11A").Render("X"), "X\x1b[0m")
+	playing := m.queueRows(60)[0]
+	if !strings.Contains(playing, open+"Title-e0") {
+		t.Errorf("the playing row is not in the colour of 11A:\n%q", playing)
+	}
+	if next := m.queueRows(60)[1]; strings.Contains(next, open) {
+		t.Errorf("a queued song is coloured by a key it has not:\n%q", next)
+	}
+}
+
+func TestTheHelpBoxIsWide(t *testing.T) {
+	m := at(newTestModel(), 160, 50)
+	m.mode = modeHelp
+	if w := lipgloss.Width(m.helpBox()[0]); w != 100 {
+		t.Errorf("help box is %d wide, want 100", w)
+	}
+	narrow := at(newTestModel(), 80, 50)
+	narrow.mode = modeHelp
+	if w := lipgloss.Width(narrow.helpBox()[0]); w != 80 {
+		t.Errorf("on 80 columns the help box is %d wide, want the whole screen", w)
 	}
 }

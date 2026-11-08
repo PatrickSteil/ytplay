@@ -233,21 +233,11 @@ func (m Model) progressLine() string {
 		total = formatClock(m.total)
 	}
 	prefix := fmt.Sprintf("%s %s / %s  ", icon, formatClock(m.elapsed), total)
-	barW := min(m.textWidth()-lipgloss.Width(prefix)-5, 30)
-	if barW < 6 {
-		return th.accent.Render(prefix)
-	}
-	frac := 0.0
-	if m.total > 0 {
-		frac = min(max(m.elapsed/m.total, 0), 1)
-	}
-	filled := int(frac * float64(barW))
-	bar := th.accent.Render(strings.Repeat("█", filled)) + dim.Render(strings.Repeat("░", barW-filled))
 	pct := ""
 	if m.total > 0 {
-		pct = fmt.Sprintf(" %d%%", int(frac*100+0.5))
+		pct = fmt.Sprintf(" %d%%", int(min(max(m.elapsed/m.total, 0), 1)*100+0.5))
 	}
-	return th.accent.Render(prefix) + bar + pct
+	return th.accent.Render(strings.TrimRight(prefix, " ")) + pct
 }
 
 // queueWindowSize is how many upcoming entries the queue shows at once.
@@ -279,7 +269,11 @@ func (m Model) queueRows(w int) []string {
 		title, _, dur := m.entryInfo(e)
 		return fit(safe(title), titleW) + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
 	}
-	lines := []string{th.accentB.Render("  ▶  ") + iconOfEntry(*cur) + " " + th.accent.Render(rowFor(*cur))}
+	playing := th.accent // the playing song is in the colour of its key on the Camelot wheel
+	if st := m.stats[yt.KeyOf(cur.Filename)]; st.hasRes && st.res.Camelot != "" {
+		playing = camelotStyle(st.res.Camelot)
+	}
+	lines := []string{th.accentB.Render("  ▶  ") + iconOfEntry(*cur) + " " + playing.Render(rowFor(*cur))}
 
 	win := m.queueWindowSize()
 	off := 0
@@ -658,13 +652,21 @@ func (m Model) bpmKeyLine() string {
 	if bpm > 0 {
 		parts = append(parts, fmt.Sprintf("%.0f BPM", bpm))
 	}
+	var key []string
 	if st.hasRes && st.res.Key != "" {
-		parts = append(parts, st.res.Key)
+		key = append(key, st.res.Key)
 		if st.res.Camelot != "" {
-			parts = append(parts, st.res.Camelot)
+			key = append(key, st.res.Camelot)
 		}
 	}
-	return th.accent.Render(strings.Join(parts, " · "))
+	line := th.accent.Render(strings.Join(parts, " · "))
+	if len(key) > 0 { // the key in the colour of its place on the Camelot wheel
+		if len(parts) > 0 {
+			line += th.accent.Render(" · ")
+		}
+		line += camelotStyle(st.res.Camelot).Render(strings.Join(key, " · "))
+	}
+	return line
 }
 
 // statsLine is "1.2M views · 8.9K likes · 2013" (empty until known).
@@ -935,7 +937,7 @@ func (m Model) helpWindow() int { return max(m.height-5, 3) } // borders, the cl
 // helpBox is the help popup. On a small terminal it scrolls with j and k.
 func (m Model) helpBox() []string {
 	th := m.theme()
-	w := max(min(70, m.width)-2, 0)
+	w := max(min(100, m.width)-2, 0)
 	row := func(s string) string { return th.accent.Render("│") + fit(" "+s, w) + th.accent.Render("│") }
 	title := " ytplay help "
 	rows, win := m.helpRows(), m.helpWindow()
