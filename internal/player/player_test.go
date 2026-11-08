@@ -136,6 +136,8 @@ func describe(ev mpv.Event) string {
 	switch ev.Name {
 	case "end-file":
 		return "end-file:" + ev.Reason
+	case "cast":
+		return "cast:" + ev.Reason
 	case "property-change":
 		if ev.Property == "playlist" {
 			var pl []struct {

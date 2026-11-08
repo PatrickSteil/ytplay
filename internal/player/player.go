@@ -62,6 +62,7 @@ type Player struct {
 	// trim tells where songs start and end sounding (see trim.go); trimmedStart is
 	// the song whose start was dealt with.
 	trim         Analyses
+	cast         *castState // set while playing on a speaker (see cast.go)
 	trimmedStart trimmed
 	trans        *transition
 	epoch        time.Time  // the time positions are counted from when timing a start
@@ -142,6 +143,10 @@ func (p *Player) watch(i int, d Deck) {
 				p.onDeckEvent(i, ev)
 			case <-d.Done():
 				p.mu.Lock()
+				if p.decks[i] != d {
+					p.mu.Unlock()
+					return
+				}
 				if i == p.active {
 					p.doneOnce.Do(func() { close(p.done) })
 				} else {
