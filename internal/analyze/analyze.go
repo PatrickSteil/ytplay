@@ -101,6 +101,10 @@ func AnalyzeWith(pcm []float32, o Options) (Result, error) {
 	} else if o.Level == Full {
 		res.Edges = edgesOf(pcm, res.BPM, o.Pool)
 	}
+	if o.Level == Light { // no beat grids, but where the sound starts and stops is cheap, and enough to trim silence by
+		start, end := audibleRange(pcm)
+		res.Edges = Edges{AudioStart: start, AudioEnd: end}
+	}
 	if o.Pool == nil {
 		findKey()
 	}

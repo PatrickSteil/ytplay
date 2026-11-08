@@ -121,9 +121,6 @@ func analyzeExcerpt(pcm []float32, x Excerpt, o Options) (Result, error) {
 		return res, err
 	}
 	res.Wave.Offset = x.Offset
-	if res.Level == Light {
-		return res, nil
-	}
 	seconds := float64(len(pcm)) / SampleRate
 	switch {
 	case x.Offset > 0:

@@ -21,8 +21,10 @@ func TestLightKeepsTempoAndKeyAndSkipsTheGrids(t *testing.T) {
 	if light.Level != Light {
 		t.Errorf("Level = %v, want Light", light.Level)
 	}
-	if light.Edges != (Edges{}) {
-		t.Errorf("a light analysis has no edges, got %+v", light.Edges)
+	// no beat grids, but where the sound starts and ends is cheap to know, and is
+	// what the player trims silence by
+	if want := (Edges{AudioStart: full.Edges.AudioStart, AudioEnd: full.Edges.AudioEnd}); light.Edges != want {
+		t.Errorf("a light analysis has the audible range only: got %+v, want %+v", light.Edges, want)
 	}
 	if light.BPM != full.BPM || light.TempoScore != full.TempoScore || light.Key != full.Key || light.Camelot != full.Camelot || light.KeyScore != full.KeyScore {
 		t.Errorf("tempo and key differ between light and full:\n light %+v\n full  %+v", light, full)
@@ -105,6 +107,43 @@ func TestAnEdgeOfAnExcerptIsNotAnEdgeOfTheSong(t *testing.T) {
 		}
 		if res.BPM != whole.BPM {
 			t.Errorf("%s: the tempo must not change, got %.2f want %.2f", c.name, res.BPM, whole.BPM)
+		}
+	}
+}
+
+// The same holds for a light analysis: of an excerpt it keeps the audible start
+// if the excerpt starts the song, the audible end only if it ends it.
+func TestALightExcerptKeepsOnlyWhatItKnows(t *testing.T) {
+	// five seconds of silence in front of a drum track, and five behind it
+	body := drumTrack(124, 0.337, 60, drumOpts{})
+	x := append(append(make([]float32, 5*SampleRate), body...), make([]float32, 5*SampleRate)...)
+	whole, err := AnalyzeWith(x, Options{Level: Light})
+	if err != nil || whole.Edges.AudioStart < 4 || whole.Edges.AudioEnd > 66 {
+		t.Fatalf("setup: %+v %v", whole.Edges, err)
+	}
+	cases := []struct {
+		name       string
+		x          Excerpt
+		start, end bool
+	}{
+		{"the whole song", Excerpt{Offset: 0, Duration: 70}, true, true},
+		{"duration unknown", Excerpt{Offset: 0, Duration: 0}, true, true},
+		{"the first minute of a ten minute track", Excerpt{Offset: 0, Duration: 600}, true, false},
+		{"the middle of a long track", Excerpt{Offset: 20, Duration: 700}, false, false},
+	}
+	for _, c := range cases {
+		res, err := analyzeExcerpt(x, c.x, Options{Level: Light})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := res.Edges.AudioStart > 4; got != c.start {
+			t.Errorf("%s: start kept = %v, want %v (%+v)", c.name, got, c.start, res.Edges)
+		}
+		if got := res.Edges.AudioEnd > 0; got != c.end {
+			t.Errorf("%s: end kept = %v, want %v (%+v)", c.name, got, c.end, res.Edges)
+		}
+		if res.Wave.Offset != c.x.Offset {
+			t.Errorf("%s: the wave's offset is lost", c.name)
 		}
 	}
 }
