@@ -274,12 +274,12 @@ func (m Model) queueRows(w int) []string {
 	}
 	upcoming := m.upcoming()
 	const durW = 8
-	titleW := max(w-5-durW-1, 1)
+	titleW := max(w-5-2-durW-1, 1) // marker, source icon
 	rowFor := func(e playlistEntry) string {
 		title, _, dur := m.entryInfo(e)
 		return fit(safe(title), titleW) + " " + fmt.Sprintf("%*s", durW, formatDur(dur))
 	}
-	lines := []string{th.accentB.Render("  ▶  ") + th.accent.Render(rowFor(*cur))}
+	lines := []string{th.accentB.Render("  ▶  ") + iconOfEntry(*cur) + " " + th.accent.Render(rowFor(*cur))}
 
 	win := m.queueWindowSize()
 	off := 0
@@ -289,9 +289,9 @@ func (m Model) queueRows(w int) []string {
 	end := min(off+win, len(upcoming))
 	for i := off; i < end; i++ {
 		if m.mode == modeQueue && i == m.queueCursor {
-			lines = append(lines, th.accentB.Render(fmt.Sprintf("> %d. ", i+1)+rowFor(upcoming[i])))
+			lines = append(lines, th.accentB.Render(fmt.Sprintf("> %d. ", i+1))+iconOfEntry(upcoming[i])+" "+th.accentB.Render(rowFor(upcoming[i])))
 		} else {
-			lines = append(lines, dim.Render(fmt.Sprintf("%3d. ", i+1))+rowFor(upcoming[i]))
+			lines = append(lines, dim.Render(fmt.Sprintf("%3d. ", i+1))+iconOfEntry(upcoming[i])+" "+rowFor(upcoming[i]))
 		}
 	}
 	if more := len(upcoming) - end; more > 0 {
@@ -371,7 +371,7 @@ func (m Model) resultRow(w, i int, r yt.Result, focused bool) string {
 	if w >= 50 {
 		chanW = min(w/4, 24)
 	}
-	titleW := w - 2 - durW - 1
+	titleW := w - 2 - 2 - durW - 1 // marker, source icon
 	if chanW > 0 {
 		titleW -= chanW + 2
 	}
@@ -380,13 +380,14 @@ func (m Model) resultRow(w, i int, r yt.Result, focused bool) string {
 	if chanW > 0 {
 		row += "  " + fit(safe(r.Channel), chanW)
 	}
+	icon := sourceIcon(r.Source) + " "
 	switch {
 	case i == m.selected && focused:
-		return th.accentB.Render("> " + row)
+		return th.accentB.Render("> ") + icon + th.accentB.Render(row)
 	case i == m.selected:
-		return dim.Render("> " + row)
+		return dim.Render("> ") + icon + dim.Render(row)
 	}
-	return "  " + row
+	return "  " + icon + row
 }
 
 // View draws three framed columns on wide terminals and a stacked layout
@@ -732,15 +733,17 @@ func (m Model) statsLinesN(w, avail int) (lines []string, comments int) {
 				break
 			}
 			c := st.info.Comments[i]
-			prefix := ""
+			prefix, prefixStyle := "", th.accent
 			if c.Likes > 0 {
 				// ASCII on purpose: glyphs such as "♥" are drawn two cells
 				// wide by some terminals and would cover the count.
 				prefix = "(" + compact(c.Likes) + ") "
+			} else if c.At > 0 { // SoundCloud: where in the track it was left
+				prefix, prefixStyle = fmt.Sprintf("@%d:%02d ", int(c.At)/60, int(c.At)%60), dim
 			}
 			for j, l := range wrapText(prefix+c.Text, w, min(2, room)) {
 				if rest, ok := strings.CutPrefix(l, prefix); ok && j == 0 && prefix != "" {
-					body = append(body, th.accent.Render(prefix)+dim.Render(rest))
+					body = append(body, prefixStyle.Render(prefix)+dim.Render(rest))
 				} else {
 					body = append(body, dim.Render(l))
 				}
@@ -862,20 +865,20 @@ func (m Model) djBox() []string {
 	if m.djCursor >= off+win {
 		off = m.djCursor - win + 1
 	}
-	titleW := max(w-1-2-1-9-4, 1) // marker, title, tempo, key
+	titleW := max(w-1-2-2-1-9-4, 1) // marker, icon, title, tempo, key
 	for r := off; r < min(off+win, n); r++ {
 		e := m.djEntry(r)
 		name, _, _ := m.entryInfo(e)
-		id := yt.VideoID(e.Filename)
+		id := yt.KeyOf(e.Filename)
 		text := fit(safe(name), titleW) + " " + m.djTempo(id)
 		key := m.djKey(id)
 		switch {
 		case r == m.djCursor:
-			lines = append(lines, row(th.accentB.Render("> ")+th.accentB.Render(ansi.Strip(text))+key))
+			lines = append(lines, row(th.accentB.Render("> ")+iconOfEntry(e)+" "+th.accentB.Render(ansi.Strip(text))+key))
 		case r == 0:
-			lines = append(lines, row(th.accent.Render("▶ ")+text+key))
+			lines = append(lines, row(th.accent.Render("▶ ")+iconOfEntry(e)+" "+text+key))
 		default:
-			lines = append(lines, row("  "+text+key))
+			lines = append(lines, row("  "+iconOfEntry(e)+" "+text+key))
 		}
 	}
 	autoLine := dim.Render("autodj off · :auto switches it on")

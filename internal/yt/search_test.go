@@ -78,7 +78,7 @@ func TestLastNonEmptyLine(t *testing.T) {
 	}
 }
 
-func TestVideoIDFromURL(t *testing.T) {
+func TestKeyOfAWatchURL(t *testing.T) {
 	tests := []struct {
 		url, want string
 	}{
@@ -90,8 +90,8 @@ func TestVideoIDFromURL(t *testing.T) {
 		{"::not a url", ""},
 	}
 	for _, tt := range tests {
-		if got := VideoID(tt.url); got != tt.want {
-			t.Errorf("VideoID(%q) = %q, want %q", tt.url, got, tt.want)
+		if got := KeyOf(tt.url); got != tt.want {
+			t.Errorf("KeyOf(%q) = %q, want %q", tt.url, got, tt.want)
 		}
 	}
 }
@@ -241,5 +241,25 @@ func TestSimilarFailsWhenEveryMixFails(t *testing.T) {
 	}
 	if _, err := Similar(context.Background(), script, nil, nil, 10); err == nil {
 		t.Fatal("no seeds should be an error")
+	}
+}
+
+func TestSimilarUsesOnlyYouTubeSeedsAndSaysSoWhenThereAreNone(t *testing.T) {
+	script, argsFile := recordingYtdlp(t, `echo '{"id":"r1","title":"R","duration":9}'`)
+	got, err := Similar(context.Background(), script, []string{"sc:u/t", "abc", "sc:v/w"}, nil, 5)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %v err %v", got, err)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if strings.Contains(string(args), "sc:") || strings.Count(string(args), "list=RDabc") != 1 {
+		t.Errorf("yt-dlp was asked about the wrong seeds:\n%s", args)
+	}
+	os.Remove(argsFile)
+	_, err = Similar(context.Background(), script, []string{"sc:u/t"}, nil, 5)
+	if err == nil || !strings.Contains(err.Error(), "YouTube") {
+		t.Errorf("err %v, want it to say radio needs a YouTube song", err)
+	}
+	if _, statErr := os.Stat(argsFile); statErr == nil {
+		t.Error("yt-dlp was run for a SoundCloud seed")
 	}
 }

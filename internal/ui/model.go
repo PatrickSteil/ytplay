@@ -68,7 +68,9 @@ type Actions interface {
 
 // Deps are the things the UI calls out to.
 type Deps struct {
-	Search func(ctx context.Context, query string) ([]yt.Result, error)
+	// Search looks up a name; failed names a source that could not be searched
+	// while the other's results are returned.
+	Search func(ctx context.Context, query string) (results []yt.Result, failed map[yt.Source]error, err error)
 	Player Actions
 	// Position reads time-pos and duration; it errors while nothing is loaded.
 	Position func(ctx context.Context) (elapsed, total float64, err error)
@@ -95,7 +97,7 @@ type Deps struct {
 	// Download saves the audio of a video to a file (nil: no downloads).
 	Download func(ctx context.Context, id, path string) error
 	// Cover returns the rendered cover for a video ID (nil: no covers).
-	Cover func(ctx context.Context, id string) (string, error)
+	Cover func(ctx context.Context, id, thumb string) (string, error)
 }
 
 // NowPlaying is a snapshot of the current track for the desktop shell.
@@ -276,7 +278,7 @@ func (m Model) nowPlaying() NowPlaying {
 	}
 	title, channel, dur := m.entryInfo(*e)
 	return NowPlaying{
-		Active: true, ID: yt.VideoID(e.Filename), Title: title, Channel: channel,
+		Active: true, ID: yt.KeyOf(e.Filename), Title: title, Channel: channel,
 		Duration: dur, Paused: m.paused, HasNext: len(m.upcoming()) > 0,
 	}
 }
@@ -449,7 +451,11 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 			if e := m.currentEntry(); e != nil {
 				title, _, _ = m.entryInfo(*e)
 			}
-			return m, m.setStatus("Could not play: "+title, true)
+			text := "Could not play: " + title
+			if e := m.currentEntry(); e != nil && yt.SourceOf(yt.KeyOf(e.Filename)) == yt.SoundCloud {
+				text += " (SoundCloud: it may be protected or removed)"
+			}
+			return m, m.setStatus(text, true)
 		}
 	}
 	m.clampQueue()
@@ -504,7 +510,7 @@ func (m *Model) startQueuedAnalyses() tea.Cmd {
 		if len(m.queueRunning) >= queueAnalysisWorkers {
 			break
 		}
-		id := yt.VideoID(e.Filename)
+		id := yt.KeyOf(e.Filename)
 		if id == "" || !m.needsFull(id) {
 			continue
 		}
@@ -592,11 +598,11 @@ func (m Model) fetchCover(id string) tea.Cmd {
 		return nil
 	}
 	m.coverAsked[id] = true
-	fetch := m.deps.Cover
+	fetch, thumb := m.deps.Cover, m.tracks[id].Thumb // thumb is "" for YouTube: its URL follows from the id
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		rendered, err := fetch(ctx, id)
+		rendered, err := fetch(ctx, id, thumb)
 		return coverMsg{id: id, rendered: rendered, err: err}
 	}
 }
@@ -604,7 +610,7 @@ func (m Model) fetchCover(id string) tea.Cmd {
 // currentID is the video ID of the current entry ("" when idle).
 func (m Model) currentID() string {
 	if e := m.currentEntry(); e != nil {
-		return yt.VideoID(e.Filename)
+		return yt.KeyOf(e.Filename)
 	}
 	return ""
 }
@@ -613,7 +619,7 @@ func (m Model) currentID() string {
 // know from search results over mpv's own title (which is the URL while the
 // stream is still loading).
 func (m Model) entryInfo(e playlistEntry) (title, channel string, dur float64) {
-	if r, ok := m.tracks[yt.VideoID(e.Filename)]; ok {
+	if r, ok := m.tracks[yt.KeyOf(e.Filename)]; ok {
 		return r.Title, r.Channel, r.Duration
 	}
 	title = e.Title
@@ -756,8 +762,8 @@ func (m *Model) startSearch(q string) tea.Cmd {
 	m.query = q
 	seq, search := m.searchSeq, m.deps.Search
 	return func() tea.Msg {
-		res, err := search(ctx, q)
-		return searchDoneMsg{seq: seq, query: q, results: res, err: err}
+		res, failed, err := search(ctx, q)
+		return searchDoneMsg{seq: seq, query: q, results: res, failed: failed, err: err}
 	}
 }
 
@@ -776,6 +782,12 @@ func (m Model) handleSearchDone(msg searchDoneMsg) (tea.Model, tea.Cmd) {
 	m.mode = modeResults
 	m.input.Blur()
 	m.status = ""
+	for _, src := range []yt.Source{yt.YouTube, yt.SoundCloud} {
+		if err := msg.failed[src]; err != nil {
+			name := map[yt.Source]string{yt.YouTube: "YouTube", yt.SoundCloud: "SoundCloud"}[src]
+			return m, m.setStatus(fmt.Sprintf("%s search failed: %v (showing the rest)", name, err), true)
+		}
+	}
 	return m, nil
 }
 
@@ -839,7 +851,7 @@ func (m Model) downloadPlaying() (Model, tea.Cmd) {
 		return m, m.setStatus("Nothing is playing", false)
 	}
 	title, channel, dur := m.entryInfo(*e)
-	id := yt.VideoID(e.Filename)
+	id := yt.KeyOf(e.Filename)
 	return m.openDownload(yt.Result{ID: id, Title: title, Channel: channel, Duration: dur})
 }
 
@@ -1283,7 +1295,7 @@ func (m Model) setBPM(text string) (next Model, status, warn string) {
 		return m, "", warn
 	}
 	e := m.djEntry(m.djCursor)
-	id := yt.VideoID(e.Filename)
+	id := yt.KeyOf(e.Filename)
 	title, _, _ := m.entryInfo(e)
 	if clear {
 		delete(m.bpmSet, id)
@@ -1314,7 +1326,7 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	var known, unknown []item
 	pending, noBPM := 0, 0
 	for i, e := range up {
-		id := yt.VideoID(e.Filename)
+		id := yt.KeyOf(e.Filename)
 		st := m.stats[id]
 		switch bpm := m.tempoOf(id); {
 		case bpm > 0:
@@ -1399,7 +1411,7 @@ func radioSeeds(pl []playlistEntry, pos int) []string {
 	var seeds []string
 	seen := map[string]bool{}
 	for _, e := range picks {
-		if id := yt.VideoID(e.Filename); id != "" && !seen[id] {
+		if id := yt.KeyOf(e.Filename); id != "" && !seen[id] {
 			seen[id] = true
 			seeds = append(seeds, id)
 		}
@@ -1418,7 +1430,7 @@ func (m Model) startRadio(n int) (Model, tea.Cmd) {
 	// Everything already in the playlist, played songs included, is excluded.
 	exclude := map[string]bool{}
 	for _, e := range m.playlist {
-		exclude[yt.VideoID(e.Filename)] = true
+		exclude[yt.KeyOf(e.Filename)] = true
 	}
 	m.radioBusy = true
 	m.setStickyStatus("Finding similar songs…")

@@ -202,7 +202,10 @@ func TestLoadingNeedsThePlayerSideToSupportIt(t *testing.T) {
 func TestALinkInTheSearchBarLoadsInsteadOfSearching(t *testing.T) {
 	m, f := loadModel(t, listOf(2))
 	searched := 0
-	m.deps.Search = func(ctx context.Context, q string) ([]yt.Result, error) { searched++; return nil, nil }
+	m.deps.Search = func(ctx context.Context, q string) ([]yt.Result, map[yt.Source]error, error) {
+		searched++
+		return nil, nil, nil
+	}
 	m, _ = send(m, "/")
 	for _, r := range playlistLink {
 		m, _ = send(m, string(r))

@@ -98,7 +98,7 @@ func TestWideQueueCursorScrolls(t *testing.T) {
 		m, _ = send(m, "j")
 	}
 	out := m.View()
-	if !strings.Contains(out, "> 26. Title-e26") {
+	if !strings.Contains(out, "> 26. ● Title-e26") {
 		t.Errorf("cursor row not visible:\n%s", out)
 	}
 	if strings.Count(out, "> ") != 1 {
@@ -126,7 +126,7 @@ func TestWideResultsScrollWithSelection(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		m, _ = send(m, "j")
 	}
-	want := "> Song " + string(rune('A'+30))
+	want := "> ● Song " + string(rune('A'+30))
 	if out := m.View(); !strings.Contains(out, want) {
 		t.Errorf("selected row %q not visible:\n%s", want, out)
 	}

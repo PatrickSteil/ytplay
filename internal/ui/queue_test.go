@@ -221,14 +221,14 @@ func TestQueueViewMarksCursorAndScrolls(t *testing.T) {
 	m := queueModel(t, 10) // 9 editable
 	m, _ = send(m, "tab")
 	out := m.View()
-	if !strings.Contains(out, "> 1. Title-e1") {
+	if !strings.Contains(out, "> 1. ● Title-e1") {
 		t.Errorf("cursor not marked on first entry:\n%s", out)
 	}
 	for i := 0; i < 6; i++ {
 		m, _ = send(m, "j")
 	}
 	out = m.View()
-	if !strings.Contains(out, "> 7. Title-e7") {
+	if !strings.Contains(out, "> 7. ● Title-e7") {
 		t.Errorf("cursor row (7.) not visible/marked:\n%s", out)
 	}
 	if strings.Contains(out, "Title-e1 ") {

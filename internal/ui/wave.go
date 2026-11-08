@@ -226,7 +226,7 @@ func (m Model) mixZone() (from, to float64) {
 	if length <= 0 {
 		length = m.tracks[m.currentID()].Duration
 	}
-	p := autodj.For(known(cur.Filename, length), known(next[0].Filename, m.tracks[yt.VideoID(next[0].Filename)].Duration))
+	p := autodj.For(known(cur.Filename, length), known(next[0].Filename, m.tracks[yt.KeyOf(next[0].Filename)].Duration))
 	return p.AStart, p.AStart + p.Overlap
 }
 

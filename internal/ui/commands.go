@@ -35,7 +35,7 @@ type command struct {
 var commands = []command{
 	{name: "find", short: []string{"f"}, run: cmdFind, usage: ":find NAME", about: "search for NAME, or load a YouTube link (no name: open the bar)"},
 	{name: "add", run: cmdAdd, usage: ":add", about: "add the highlighted result to the queue"},
-	{name: "load", short: []string{"l"}, run: cmdLoad, usage: ":load LINK", about: "add a YouTube playlist (or video) link to the queue"},
+	{name: "load", short: []string{"l"}, run: cmdLoad, usage: ":load LINK", about: "add a YouTube or SoundCloud playlist, set or song link to the queue"},
 	{name: "play", run: cmdPlay, usage: ":play", about: "play the highlighted song now (Enter does too)"},
 	{name: "skip", short: []string{"s"}, run: cmdSkip, usage: ":skip", about: "skip to the next song"},
 	{name: "prev", short: []string{"p"}, run: cmdPrev, usage: ":prev", about: "the song before (or the start of this one)"},
@@ -272,7 +272,7 @@ func cmdDownload(m Model, _ string) (Model, tea.Cmd) {
 	case m.mode == modeQueue && len(m.upcoming()) > 0:
 		e := m.upcoming()[m.queueCursor]
 		title, channel, dur := m.entryInfo(e)
-		return m.openDownload(yt.Result{ID: yt.VideoID(e.Filename), Title: title, Channel: channel, Duration: dur})
+		return m.openDownload(yt.Result{ID: yt.KeyOf(e.Filename), Title: title, Channel: channel, Duration: dur})
 	}
 	return m.downloadPlaying()
 }

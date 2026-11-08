@@ -146,11 +146,11 @@ func TestCacheDownloadsEachCoverOnce(t *testing.T) {
 	var hits atomic.Int32
 	fakeYT(t, &hits, map[string][]byte{"/vi/abc/mqdefault.jpg": jpegBytes(t, 320, 180)})
 	c := NewCache()
-	a, err := c.Get(context.Background(), "abc")
+	a, err := c.Get(context.Background(), "abc", "")
 	if err != nil || a == "" {
 		t.Fatalf("Get: %q, %v", a, err)
 	}
-	b, err := c.Get(context.Background(), "abc")
+	b, err := c.Get(context.Background(), "abc", "")
 	if err != nil || b != a {
 		t.Fatalf("second Get differs: %v", err)
 	}
@@ -163,11 +163,11 @@ func TestCacheDoesNotRetryFailures(t *testing.T) {
 	var hits atomic.Int32
 	fakeYT(t, &hits, nil)
 	c := NewCache()
-	if _, err := c.Get(context.Background(), "abc"); err == nil {
+	if _, err := c.Get(context.Background(), "abc", ""); err == nil {
 		t.Fatal("expected error")
 	}
 	after := hits.Load()
-	if _, err := c.Get(context.Background(), "abc"); err == nil {
+	if _, err := c.Get(context.Background(), "abc", ""); err == nil {
 		t.Fatal("expected cached error")
 	}
 	if hits.Load() != after {

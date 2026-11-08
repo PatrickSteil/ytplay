@@ -177,6 +177,13 @@ view.
   URL handed to yt-dlp is rebuilt from the parsed id, never the pasted text. One load
   at a time ("Still loading the last link…"), a failure says why and can be retried,
   and one undo step brings the queue back.
+- SoundCloud as a second source (plan: `docs/superpowers/plans/2026-11-08-soundcloud-source.md`): a
+  search asks YouTube and SoundCloud in parallel and interleaves them, with a coloured dot per song;
+  songs are identified by a key (YouTube: the video id, SoundCloud: `sc:user/track`) and URLs are
+  rebuilt from valid keys only; cover (centre-cropped from SoundCloud's square artwork, from
+  allow-listed hosts), description, statistics and comments work for both; `:load` takes SoundCloud
+  track and set links. DRM-protected tracks cannot be told apart in search results, so a play
+  failure says "it may be protected or removed". `:radio` uses the YouTube songs only.
 - The hints at the bottom right are per state (nothing playing, playing, results,
   queue, search bar, DJ popup, help, the questions, the download popup). A test
   uses every hint in its state and checks that it changes something and that the

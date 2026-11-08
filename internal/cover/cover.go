@@ -4,11 +4,14 @@ package cover
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
 	_ "image/jpeg" // register the JPEG decoder
+	_ "image/png"  // and the PNG one (SoundCloud artwork may be PNG)
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +31,11 @@ var baseURL = "https://i.ytimg.com"
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 func download(ctx context.Context, path string) (image.Image, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+	return get(ctx, baseURL+path)
+}
+
+func get(ctx context.Context, target string) (image.Image, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -62,6 +69,43 @@ func Fetch(ctx context.Context, id string) (image.Image, error) {
 		return nil, fmt.Errorf("%w; fallback: %v", err, hqErr)
 	}
 	return cropBars(hq), nil
+}
+
+// thumbAllowed says whether a thumbnail may be fetched from a URL: only over
+// https and only from the hosts of YouTube and SoundCloud artwork (the URL comes
+// from yt-dlp's output about a stranger's upload, not from us). A variable so
+// tests can allow their own server.
+var thumbAllowed = func(u *url.URL) bool {
+	h := strings.ToLower(u.Hostname())
+	return u.Scheme == "https" && (h == "i.ytimg.com" || h == "sndcdn.com" || strings.HasSuffix(h, ".sndcdn.com"))
+}
+
+// FetchURL downloads a thumbnail and crops it from the centre to the 16:9 of a
+// cover (SoundCloud artwork is square), if it is not that already.
+func FetchURL(ctx context.Context, raw string) (image.Image, error) {
+	u, err := url.Parse(raw)
+	if err != nil || !thumbAllowed(u) {
+		return nil, fmt.Errorf("download cover: thumbnail not allowed: %q", raw)
+	}
+	img, err := get(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	return cropWide(img), nil
+}
+
+// cropWide cuts an image taller than 16:9 to 16:9 around its middle.
+func cropWide(img image.Image) image.Image {
+	b := img.Bounds()
+	h := b.Dx() * 9 / 16
+	if b.Dx() == 0 || h >= b.Dy() {
+		return img
+	}
+	top := b.Min.Y + (b.Dy()-h)/2
+	r := image.Rect(b.Min.X, top, b.Max.X, top+h)
+	dst := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+	draw.Draw(dst, dst.Bounds(), img, r.Min, draw.Src)
+	return dst
 }
 
 // cropBars removes the black bars of a 4:3 hqdefault image (480x360): the
@@ -120,9 +164,10 @@ type result struct {
 // NewCache returns an empty cache.
 func NewCache() *Cache { return &Cache{done: map[string]result{}} }
 
-// Get returns the rendered default-size cover for a video, downloading it on
-// first use. Failures are cached too, so a broken cover is never retried.
-func (c *Cache) Get(ctx context.Context, id string) (string, error) {
+// Get returns the rendered default-size cover for a song, downloading it on
+// first use: from its thumbnail URL if it has one, else (YouTube) from the video
+// id. Failures are cached too, so a broken cover is never retried.
+func (c *Cache) Get(ctx context.Context, id, thumb string) (string, error) {
 	c.mu.Lock()
 	if r, ok := c.done[id]; ok {
 		c.mu.Unlock()
@@ -130,7 +175,16 @@ func (c *Cache) Get(ctx context.Context, id string) (string, error) {
 	}
 	c.mu.Unlock()
 
-	img, err := Fetch(ctx, id)
+	var img image.Image
+	var err error
+	switch {
+	case thumb != "":
+		img, err = FetchURL(ctx, thumb)
+	case strings.HasPrefix(id, "sc:"):
+		err = errors.New("no artwork")
+	default:
+		img, err = Fetch(ctx, id)
+	}
 	r := result{err: err}
 	if err == nil {
 		r.rendered = Render(img, Cols, Rows)

@@ -11,11 +11,13 @@ import (
 	"time"
 )
 
-// Comment is one YouTube comment.
+// Comment is one comment. SoundCloud comments have no likes; they say instead
+// where in the track they were left (At, seconds).
 type Comment struct {
 	Author string
 	Text   string
 	Likes  int
+	At     float64
 }
 
 // Info is the extra data shown about the current song.
@@ -25,6 +27,7 @@ type Info struct {
 	Likes       int
 	Year        int // upload year, 0 if unknown
 	Comments    []Comment
+	Source      Source
 }
 
 const infoTimeout = 30 * time.Second
@@ -34,10 +37,12 @@ type rawInfo struct {
 	ViewCount   *int    `json:"view_count"`
 	LikeCount   *int    `json:"like_count"`
 	UploadDate  *string `json:"upload_date"` // YYYYMMDD
+	ReleaseYear *int    `json:"release_year"`
 	Comments    []struct {
-		Author *string `json:"author"`
-		Text   *string `json:"text"`
-		Likes  *int    `json:"like_count"`
+		Author *string  `json:"author"`
+		Text   *string  `json:"text"`
+		Likes  *int     `json:"like_count"`
+		At     *float64 `json:"start_time"`
 	} `json:"comments"`
 }
 
@@ -45,13 +50,17 @@ type rawInfo struct {
 // maxComments comments of a video. It resolves the video, so it takes a
 // couple of seconds.
 func FetchInfo(ctx context.Context, ytdlpPath, id string, maxComments int) (Info, error) {
+	target := URLOf(id)
+	if target == "" {
+		return Info{}, fmt.Errorf("not a song: %q", id)
+	}
 	ctx, cancel := context.WithTimeout(ctx, infoTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, ytdlpPath,
 		"--skip-download", "--dump-single-json", "--no-warnings", "--ignore-config", "--write-comments",
 		"--extractor-args", "youtube:max_comments="+strconv.Itoa(maxComments)+",all,0,0;comment_sort=top",
-		"https://www.youtube.com/watch?v="+id)
+		target)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -69,7 +78,7 @@ func FetchInfo(ctx context.Context, ytdlpPath, id string, maxComments int) (Info
 	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
 		return Info{}, fmt.Errorf("parse yt-dlp output: %w", err)
 	}
-	var info Info
+	info := Info{Source: SourceOf(id)}
 	if raw.Description != nil {
 		info.Description = *raw.Description
 	}
@@ -82,7 +91,13 @@ func FetchInfo(ctx context.Context, ytdlpPath, id string, maxComments int) (Info
 	if raw.UploadDate != nil && len(*raw.UploadDate) >= 4 {
 		info.Year, _ = strconv.Atoi((*raw.UploadDate)[:4])
 	}
+	if raw.ReleaseYear != nil && info.Year == 0 {
+		info.Year = *raw.ReleaseYear
+	}
 	for _, c := range raw.Comments {
+		if maxComments > 0 && len(info.Comments) >= maxComments {
+			break // SoundCloud sends them all, however many were asked for
+		}
 		if c.Text == nil || *c.Text == "" {
 			continue
 		}
@@ -92,6 +107,9 @@ func FetchInfo(ctx context.Context, ytdlpPath, id string, maxComments int) (Info
 		}
 		if c.Likes != nil {
 			cm.Likes = *c.Likes
+		}
+		if c.At != nil {
+			cm.At = *c.At
 		}
 		info.Comments = append(info.Comments, cm)
 	}

@@ -15,6 +15,7 @@ type searchDoneMsg struct {
 	seq     int
 	query   string
 	results []yt.Result
+	failed  map[yt.Source]error // a source that could not be searched (the rest is in results)
 	err     error
 }
 

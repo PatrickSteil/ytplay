@@ -12,7 +12,7 @@ import (
 // A link to a YouTube playlist or video, typed after :load or pasted into the
 // search bar, adds what it points to to the queue.
 
-const linkHelp = "Give a link to a YouTube playlist or video, as in :load https://www.youtube.com/playlist?list=..."
+const linkHelp = "Give a link to a YouTube or SoundCloud playlist, set or song, as in :load https://www.youtube.com/playlist?list=..."
 
 // startLoad loads the songs of a link, in the background.
 func (m Model) startLoad(l yt.Link) (Model, tea.Cmd) {

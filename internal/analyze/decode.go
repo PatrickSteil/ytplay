@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/PatrickSteil/ytplay/internal/yt"
 	"math"
 	"os/exec"
 	"strconv"
@@ -83,7 +84,10 @@ func Fetch(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64)
 // fetch is Fetch, and also says how many seconds into the song the audio starts:
 // where the middle begins, or 0 if the beginning was used instead.
 func fetch(ctx context.Context, mpvPath, ytdlpPath, id string, duration float64) ([]float32, int, error) {
-	url := "https://www.youtube.com/watch?v=" + id
+	url := yt.URLOf(id)
+	if url == "" {
+		return nil, 0, fmt.Errorf("not a song: %q", id)
+	}
 	start := windowStart(duration)
 	pcm, err := decode(ctx, mpvPath, ytdlpPath, url, start, maxSeconds)
 	if (err != nil || len(pcm) < minSeconds*SampleRate) && start > 0 && ctx.Err() == nil {

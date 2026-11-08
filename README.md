@@ -50,7 +50,7 @@ the queue after Tab.
 | --- | --- | --- |
 | `:find NAME` | `:f` | search for NAME (without a name: open the search bar) |
 | `:add` | | add the highlighted result to the queue |
-| `:load LINK` | `:l` | add a YouTube playlist link to the queue, every song in it (the first 500; private and deleted videos are skipped); a video link queues that one song (a watch link that carries `list=` counts as the playlist). A link pasted into the `/` search bar or after `:find` does the same instead of searching. It starts playing if nothing is, and `u` undoes it |
+| `:load LINK` | `:l` | add a YouTube or SoundCloud playlist (or set) link to the queue, every song in it (the first 500; private and deleted ones are skipped); a song link queues that one song (a YouTube watch link that carries `list=` counts as the playlist; short `on.soundcloud.com` links are not accepted). A link pasted into the `/` search bar or after `:find` does the same instead of searching. It starts playing if nothing is, and `u` undoes it |
 | `:play` | | play the highlighted result or queue entry now (Enter does the same) |
 | `:skip` | `:s` | skip |
 | `:prev` | `:p` | the song before; if this one has played for more than 3 s, its start |
@@ -70,6 +70,13 @@ the queue after Tab.
 | `:clear` | `:X` | clear the queue (asks first: `y` or `n`; the playing song keeps going) |
 | `:help` | `:h` | help popup (`j` `k` scroll on a small terminal) |
 | `:quit` | `:q` | quit |
+
+A search looks at YouTube and SoundCloud at the same time (10 results each, interleaved), and a
+coloured dot in front of every song says where it is from: red for YouTube, orange for SoundCloud (also in the queue and
+the DJ popup). If one of them fails the other's results are shown and the status says which failed. Cover, description,
+statistics and comments come from the song's own site; SoundCloud comments are not ranked ("Comments", not "Top comments")
+and say where in the track they were left (`@1:23`). Some SoundCloud tracks are DRM protected and cannot be played (the
+status says so); `:radio` works from the YouTube songs of the queue only.
 
 Terminals 108+ columns wide show three equal columns (now playing, queue, search);
 narrower ones get a stacked layout. Under the cover is the waveform of the playing

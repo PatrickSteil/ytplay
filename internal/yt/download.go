@@ -29,6 +29,10 @@ func SplitAudioPath(path string) (base, format string) {
 // Download saves the audio of a video to path. The extension of path picks
 // the format (default mp3); converting needs ffmpeg.
 func Download(ctx context.Context, ytdlpPath, id, path string) error {
+	target := URLOf(id)
+	if target == "" {
+		return fmt.Errorf("not a song: %q", id)
+	}
 	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 	base, format := SplitAudioPath(path)
@@ -36,7 +40,7 @@ func Download(ctx context.Context, ytdlpPath, id, path string) error {
 		"--no-playlist", "--no-warnings", "--ignore-config", "--force-overwrites",
 		"-x", "--audio-format", format,
 		"-o", strings.ReplaceAll(base, "%", "%%")+".%(ext)s",
-		"https://www.youtube.com/watch?v="+id)
+		target)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

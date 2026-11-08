@@ -175,3 +175,66 @@ func TestLoadLinkCancelled(t *testing.T) {
 		t.Errorf("a cancelled context must give an error")
 	}
 }
+
+func TestParseLinkOfSoundCloud(t *testing.T) {
+	for raw, want := range map[string]Link{
+		"https://soundcloud.com/ralph/mix":                         {VideoLink, "sc:ralph/mix"},
+		"soundcloud.com/ralph/mix":                                 {VideoLink, "sc:ralph/mix"},
+		"https://m.soundcloud.com/user.name/Track_1?si=abc&utm=x":  {VideoLink, "sc:user.name/Track_1"},
+		"<https://www.soundcloud.com/a/b>":                         {VideoLink, "sc:a/b"},
+		"https://soundcloud.com/a/b?in=a/sets/mine":                {VideoLink, "sc:a/b"}, // shared from a set: still the track
+		"https://soundcloud.com/ralph/sets/house-mixes":            {PlaylistLink, "sc:ralph/sets/house-mixes"},
+		"https://soundcloud.com/ralph/sets/house-mixes?si=x":       {PlaylistLink, "sc:ralph/sets/house-mixes"},
+		"https://soundcloud.com/ralph/sets/house-mixes/s-SeCrEt12": {PlaylistLink, "sc:ralph/sets/house-mixes"},
+	} {
+		if got := ParseLink(raw); got != want {
+			t.Errorf("ParseLink(%q) = %+v, want %+v", raw, got, want)
+		}
+	}
+	for _, raw := range []string{
+		"https://soundcloud.com/", "https://soundcloud.com/ralph", "https://soundcloud.com/ralph/likes",
+		"https://soundcloud.com/ralph/tracks", "https://soundcloud.com/ralph/sets", "https://soundcloud.com/ralph/sets/",
+		"https://soundcloud.com/a/b/c/d", "https://soundcloud.com/../x", "https://soundcloud.com/a/..",
+		"https://on.soundcloud.com/AbCdEf", // short links need a redirect to be resolved
+		"https://soundcloud.com/../sets/x", "https://soundcloud.com/a/sets/..",
+		"https://soundcloud.com.evil.com/a/b", "https://evil.com/soundcloud.com/a/b",
+		"https://soundcloud.com/a/b%20-o%20x", "https://soundcloud.com/a/b junk",
+		"ftp://soundcloud.com/a/b", "https://notsoundcloud.com/a/b",
+	} {
+		if got := ParseLink(raw); got != (Link{}) {
+			t.Errorf("ParseLink(%q) = %+v, want nothing", raw, got)
+		}
+	}
+}
+
+func TestSoundCloudLinkURLIsRebuiltFromTheKey(t *testing.T) {
+	for l, want := range map[Link]string{
+		{VideoLink, "sc:ralph/mix"}:                 "https://soundcloud.com/ralph/mix",
+		{PlaylistLink, "sc:ralph/sets/house-mixes"}: "https://soundcloud.com/ralph/sets/house-mixes",
+		{VideoLink, "sc:../x"}:                      "",
+		{PlaylistLink, "sc:a/sets/b/c"}:             "",
+		{PlaylistLink, "sc:a/b"}:                    "",
+	} {
+		if got := l.URL(); got != want {
+			t.Errorf("%+v.URL() = %q, want %q", l, got, want)
+		}
+	}
+}
+
+func TestLoadLinkReadsASoundCloudSet(t *testing.T) {
+	script, argsFile := recordingYtdlp(t, `
+echo '{"id":"1","title":"One","extractor_key":"Soundcloud","uploader":"u","duration":10,"webpage_url":"https://soundcloud.com/u/one","playlist_title":"House"}'
+echo '{"id":"2","title":"Two","extractor_key":"Soundcloud","uploader":"u","duration":20,"webpage_url":"https://soundcloud.com/u/two","playlist_title":"House"}'
+`)
+	got, err := LoadLink(context.Background(), script, Link{PlaylistLink, "sc:u/sets/house"}, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "House" || len(got.Entries) != 2 || got.Entries[1].ID != "sc:u/two" || got.Entries[0].Source != SoundCloud {
+		t.Errorf("loaded %+v", got)
+	}
+	args, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(args), "https://soundcloud.com/u/sets/house") || !strings.Contains(string(args), "--playlist-end") {
+		t.Errorf("yt-dlp args:\n%s", args)
+	}
+}

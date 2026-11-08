@@ -25,7 +25,7 @@ func (s *analysisStore) put(id string, song autodj.Song) {
 
 // lookup finds a song by its watch URL.
 func (s *analysisStore) lookup(url string) (autodj.Song, bool) {
-	id := yt.VideoID(url)
+	id := yt.KeyOf(url)
 	if id == "" {
 		return autodj.Song{}, false
 	}

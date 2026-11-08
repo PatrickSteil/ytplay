@@ -13,7 +13,7 @@ import (
 func coverModel(calls *atomic.Int32, fail bool) Model {
 	m := New(Deps{
 		Player: &fakeActions{},
-		Cover: func(ctx context.Context, id string) (string, error) {
+		Cover: func(ctx context.Context, id, thumb string) (string, error) {
 			calls.Add(1)
 			if fail {
 				return "", errors.New("404")
@@ -119,5 +119,29 @@ func TestCoverFailureKeepsPlaceholderAndIsNotRetried(t *testing.T) {
 	_, cmd := update(m, propEvent("playlist-pos", "0"))
 	if cmd != nil {
 		t.Error("failed cover was retried")
+	}
+}
+
+func TestTheCoverFetchGetsTheTracksThumbnail(t *testing.T) {
+	var got []string
+	m := New(Deps{
+		Player: &fakeActions{},
+		Cover: func(ctx context.Context, id, thumb string) (string, error) {
+			got = append(got, id+"|"+thumb)
+			return "COVER", nil
+		},
+	})
+	m.width, m.height = 90, 40
+	m.tracks = map[string]yt.Result{
+		"sc:u/t": {ID: "sc:u/t", Source: yt.SoundCloud, Thumb: "https://i1.sndcdn.com/a.jpg"},
+		"b":      {ID: "b"},
+	}
+	for _, id := range []string{"sc:u/t", "b"} {
+		if cmd := m.fetchCover(id); cmd != nil {
+			cmd()
+		}
+	}
+	if want := "sc:u/t|https://i1.sndcdn.com/a.jpg b|"; strings.Join(got, " ") != want {
+		t.Errorf("fetches %q, want %q", strings.Join(got, " "), want)
 	}
 }

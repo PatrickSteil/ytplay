@@ -5,6 +5,8 @@ import (
 	"strconv"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/PatrickSteil/ytplay/internal/yt"
 )
 
 // The comments of the playing song are shown a page at a time, and :comments goes
@@ -33,7 +35,11 @@ func (m Model) commentsHeader(st trackStats, off, shown int) string {
 	if st.maybeMoreComments() {
 		of += "+"
 	}
-	h := bold.Render("Top comments") + dim.Render(" "+which+" of "+of)
+	label := "Top comments"
+	if st.info.Source == yt.SoundCloud {
+		label = "Comments" // SoundCloud does not rank them
+	}
+	h := bold.Render(label) + dim.Render(" "+which+" of "+of)
 	if off+shown < n || st.maybeMoreComments() {
 		h += dim.Render(" · :comments for more")
 	}

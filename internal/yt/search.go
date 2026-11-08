@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -22,13 +21,20 @@ type Result struct {
 	Title    string
 	Channel  string  // "channel" field, falling back to "uploader"
 	Duration float64 // seconds; 0 when unknown
+	Source   Source
+	Thumb    string // thumbnail URL when the source gives one ("" for YouTube: derived from the ID)
 }
 
 // URL is the watch URL mpv plays.
-func (r Result) URL() string { return "https://www.youtube.com/watch?v=" + r.ID }
+func (r Result) URL() string { return URLOf(r.ID) }
 
 // ThumbURL is the 320x180 thumbnail.
-func (r Result) ThumbURL() string { return "https://i.ytimg.com/vi/" + r.ID + "/mqdefault.jpg" }
+func (r Result) ThumbURL() string {
+	if r.Thumb != "" || r.Source == SoundCloud {
+		return r.Thumb
+	}
+	return "https://i.ytimg.com/vi/" + r.ID + "/mqdefault.jpg"
+}
 
 const searchTimeout = 20 * time.Second
 
@@ -53,6 +59,7 @@ func runListFor(ctx context.Context, timeout time.Duration, ytdlpPath, target st
 	args := []string{"--flat-playlist", "--dump-json", "--no-warnings", "--ignore-config"}
 	args = append(append(args, extra...), target)
 	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
+	cmd.WaitDelay = 2 * time.Second // a child that keeps the pipes open must not hold up a cancelled search
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -103,6 +110,16 @@ func Similar(ctx context.Context, ytdlpPath string, seeds []string, exclude map[
 	if len(seeds) == 0 {
 		return nil, errors.New("no seed songs")
 	}
+	var youtube []string // only YouTube has a Mix to ask for
+	for _, seed := range seeds {
+		if SourceOf(seed) == YouTube {
+			youtube = append(youtube, seed)
+		}
+	}
+	if len(youtube) == 0 {
+		return nil, errors.New("radio needs a YouTube song in the queue")
+	}
+	seeds = youtube
 	lists := make([][]Result, len(seeds))
 	errs := make([]error, len(seeds))
 	var wg sync.WaitGroup
@@ -174,6 +191,13 @@ type rawEntry struct {
 	Uploader   *string  `json:"uploader"`
 	Duration   *float64 `json:"duration"`
 	LiveStatus *string  `json:"live_status"`
+	// SoundCloud entries are known by their page and carry their own artwork.
+	WebpageURL   string `json:"webpage_url"`
+	ExtractorKey string `json:"extractor_key"`
+	Thumbnails   []struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	} `json:"thumbnails"`
 	// PlaylistTitle is the playlist an entry of a playlist belongs to.
 	PlaylistTitle *string `json:"playlist_title"`
 }
@@ -194,10 +218,25 @@ func parseEntry(line []byte) (Result, string, bool) {
 	if e.ID == "" {
 		return Result{}, "", false
 	}
+	soundcloud := strings.HasPrefix(strings.ToLower(e.ExtractorKey), "soundcloud") || strings.Contains(strings.ToLower(e.WebpageURL), "soundcloud.com")
 	if e.LiveStatus != nil && *e.LiveStatus == "is_live" {
 		return Result{}, "", false
 	}
 	r := Result{ID: e.ID, Title: e.Title}
+	if soundcloud {
+		key := KeyOf(e.WebpageURL)
+		if SourceOf(key) != SoundCloud {
+			return Result{}, "", false // a profile, a set or something else: not a track
+		}
+		r.ID, r.Source = key, SoundCloud
+		for _, want := range []string{"t500x500", "large"} {
+			for _, t := range e.Thumbnails {
+				if t.ID == want && r.Thumb == "" {
+					r.Thumb = t.URL
+				}
+			}
+		}
+	}
 	switch {
 	case e.Channel != nil && *e.Channel != "":
 		r.Channel = *e.Channel
@@ -222,13 +261,4 @@ func lastNonEmptyLine(s string) string {
 		}
 	}
 	return ""
-}
-
-// VideoID extracts the "v" query parameter of a watch URL ("" if absent).
-func VideoID(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	return u.Query().Get("v")
 }

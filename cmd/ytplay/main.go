@@ -111,8 +111,8 @@ func runTUI(ytdlp, mpvPath string) int {
 	m := ui.New(ui.Deps{
 		Publish: publish,
 		Cover:   covers.Get,
-		Search: func(ctx context.Context, q string) ([]yt.Result, error) {
-			return yt.Search(ctx, ytdlp, q, 15)
+		Search: func(ctx context.Context, q string) ([]yt.Result, map[yt.Source]error, error) {
+			return yt.SearchAll(ctx, ytdlp, q, 10)
 		},
 		Info: func(ctx context.Context, id string, comments int) (yt.Info, error) {
 			return yt.FetchInfo(ctx, ytdlp, id, comments)

@@ -13,7 +13,7 @@ import (
 
 func newTestModel() Model {
 	m := New(Deps{
-		Search: func(ctx context.Context, q string) ([]yt.Result, error) { return nil, nil },
+		Search: func(ctx context.Context, q string) ([]yt.Result, map[yt.Source]error, error) { return nil, nil, nil },
 		Player: &fakeActions{},
 	})
 	m.width, m.height = 90, 40
@@ -147,9 +147,9 @@ func TestEnterWithEmptyQueryDoesNothing(t *testing.T) {
 
 func TestEnterRunsSearchAndShowsSearching(t *testing.T) {
 	var gotQuery string
-	m := New(Deps{Search: func(ctx context.Context, q string) ([]yt.Result, error) {
+	m := New(Deps{Search: func(ctx context.Context, q string) ([]yt.Result, map[yt.Source]error, error) {
 		gotQuery = q
-		return results(2), nil
+		return results(2), nil, nil
 	}})
 	m.width, m.height = 90, 40
 	m, _ = send(m, "/", "d", "a", "f", "t")

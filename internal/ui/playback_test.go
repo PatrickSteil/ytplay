@@ -363,3 +363,17 @@ func TestCoverHiddenWhenNarrow(t *testing.T) {
 		t.Error("cover missing at 60 columns")
 	}
 }
+
+func TestAFailedSoundCloudTrackSaysItMayBeProtected(t *testing.T) {
+	m := queueModel(t, 2)
+	m.playlist[0].Filename = "https://soundcloud.com/u/t"
+	m, _ = update(m, MpvEventMsg{mpv.Event{Name: "end-file", Reason: "error"}})
+	if !m.statusIsErr || !strings.Contains(m.status, "Could not play") || !strings.Contains(m.status, "protected or removed") {
+		t.Errorf("status %q (error %v)", m.status, m.statusIsErr)
+	}
+	y := queueModel(t, 2)
+	y, _ = update(y, MpvEventMsg{mpv.Event{Name: "end-file", Reason: "error"}})
+	if strings.Contains(y.status, "protected") {
+		t.Errorf("a YouTube failure blames protection: %q", y.status)
+	}
+}

@@ -75,8 +75,10 @@ func commentsOnScreen(m Model) string {
 
 func commentsHeader(m Model) string {
 	for _, l := range strings.Split(ansi.Strip(m.View()), "\n") {
-		if i := strings.Index(l, "Top comments"); i >= 0 {
-			return strings.TrimSpace(strings.TrimRight(l[i:], "│ "))
+		for _, label := range []string{"Top comments", "Comments 1"} {
+			if i := strings.Index(l, label); i >= 0 {
+				return strings.TrimSpace(strings.TrimRight(l[i:], "│ "))
+			}
 		}
 	}
 	return ""
@@ -270,5 +272,38 @@ func TestTheInfoFetchAsksForTenComments(t *testing.T) {
 	}
 	if got := f.asked(); len(got) != 1 || got[0] != (infoCall{"a", firstComments}) {
 		t.Errorf("fetches = %v, want one for %d comments", got, firstComments)
+	}
+}
+
+func soundCloudInfo(n int) yt.Info {
+	info := commentInfo(n)
+	info.Source = yt.SoundCloud
+	for i := range info.Comments {
+		info.Comments[i].Likes = 0
+		info.Comments[i].At = float64(65 * (i + 1)) // 1:05, 2:10, ...
+	}
+	return info
+}
+
+func TestSoundCloudCommentsAreNotCalledTopAndSayWhereInTheTrackTheyWereLeft(t *testing.T) {
+	m := statsModel(&statsFakes{})
+	m.width, m.height = 140, 50
+	m, _ = startStats(t, m, "0", "*a", "b")
+	m, _ = update(m, infoMsg{id: "a", info: soundCloudInfo(3)})
+	if h := commentsHeader(m); !strings.HasPrefix(h, "Comments ") || strings.Contains(h, "Top") {
+		t.Errorf("header %q, want Comments without Top", h)
+	}
+	out := ansi.Strip(m.View())
+	for _, want := range []string{"@1:05 Comment number 01", "@2:10 Comment number 02", "@3:15 Comment number 03"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "(0)") {
+		t.Error("a comment without likes shows a like count")
+	}
+	yt, _ := commentsModel(t, 3, 140, 50)
+	if h := commentsHeader(yt); !strings.HasPrefix(h, "Top comments") {
+		t.Errorf("a YouTube header changed: %q", h)
 	}
 }
