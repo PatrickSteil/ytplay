@@ -52,6 +52,8 @@ func (p *Player) poll(ctx context.Context) {
 	p.pollPreload(ctx)
 	if p.autoDJ {
 		p.pollTransition(ctx)
+	} else {
+		p.pollTrim(ctx)
 	}
 }
 
@@ -68,6 +70,9 @@ func (p *Player) pollPreload(ctx context.Context) {
 	total, err := d.GetFloat(ctx, "duration")
 	if err != nil || total <= 0 {
 		return
+	}
+	if end := p.trimEnd(p.q.urls[p.q.pos], total); end > 0 {
+		total = end // the sound ends before the file does: the next song is needed by then
 	}
 	lead := preloadLead
 	if p.autoDJ {

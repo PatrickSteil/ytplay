@@ -59,11 +59,15 @@ type Player struct {
 	// Automatic transitions (see autodj.go).
 	autoDJ   bool
 	analyses Analyses
-	trans    *transition
-	epoch    time.Time  // the time positions are counted from when timing a start
-	speed    [2]float64 // the speed each deck was last set to
-	ease     *easing    // the speed of deck easeDeck is returning to 1
-	easeDeck int
+	// trim tells where songs start and end sounding (see trim.go); trimmedStart is
+	// the song whose start was dealt with.
+	trim         Analyses
+	trimmedStart trimmed
+	trans        *transition
+	epoch        time.Time  // the time positions are counted from when timing a start
+	speed        [2]float64 // the speed each deck was last set to
+	ease         *easing    // the speed of deck easeDeck is returning to 1
+	easeDeck     int
 
 	events    chan mpv.Event
 	done      chan struct{} // closed when the active deck's process exits
