@@ -173,6 +173,10 @@ type Model struct {
 	queueReturn mode // where Esc / Tab goes back to
 	queueBusy   bool // an edit command is in flight
 	sortDesc    bool // the next sort by BPM puts the fastest first
+	sorted      bool // the queue was sorted by BPM and not edited by hand since: radio songs are sorted in
+	// resortIDs are the songs a radio added that are waited for (to be in the
+	// queue and analysed) before the queue is sorted again.
+	resortIDs   map[string]bool
 	confirmFrom mode // where the clear-queue popup returns to
 	radioBusy   bool // a similar-songs lookup is running
 
@@ -387,7 +391,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.songs.put(msg.id, autodj.Song{Length: m.tracks[msg.id].Duration, Edges: msg.res.Edges})
 		}
 		m.stats[msg.id] = st
-		return m, m.startQueuedAnalyses() // a slot is free
+		queued := m.startQueuedAnalyses() // a slot is free
+		m, sorted := m.maybeResort()
+		return m, tea.Batch(queued, sorted)
 
 	case coverMsg:
 		if msg.err == nil && msg.rendered != "" {
@@ -461,6 +467,8 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 	m.clampQueue()
 	m.clampDJ()
 	queued := m.startQueuedAnalyses()
+	m, sorted := m.maybeResort()
+	queued = tea.Batch(queued, sorted)
 	if cur := m.currentID(); cur != prev {
 		m.elapsed, m.total = 0, 0
 		m.undo = nil
@@ -981,8 +989,8 @@ func (m Model) handleQueueKey(k string) (Model, tea.Cmd, bool) {
 	} else {
 		m.rememberQueue("move")
 	}
-	m.sortDesc = false               // a hand edit starts the next sort from the slowest again
-	idx := m.pos + 1 + m.queueCursor // mpv playlist index of the selection
+	m.sortDesc, m.sorted = false, false // a hand edit starts the next sort from the slowest again
+	idx := m.pos + 1 + m.queueCursor    // mpv playlist index of the selection
 	p := m.deps.Player
 	pl := append([]playlistEntry(nil), m.playlist...) // never mutate the shared slice
 	var f func(ctx context.Context) error
@@ -1065,7 +1073,7 @@ func (m Model) undoQueue() (Model, tea.Cmd) {
 	e := m.undo[n-1]
 	m.undo = slices.Clone(m.undo[:n-1])
 	m.playlist = append(slices.Clone(m.playlist[:m.pos+1]), e.entries...)
-	m.sortDesc = false // the next sort starts from the slowest again
+	m.sortDesc, m.sorted = false, false // the next sort starts from the slowest again
 	m.clampQueue()
 	m.clampDJ()
 	m.queueBusy = true
@@ -1304,8 +1312,34 @@ func (m Model) setBPM(text string) (next Model, status, warn string) {
 		m.bpmSet[id] = v
 		status = fmt.Sprintf("Set BPM of %s to %s", safe(title), strconv.FormatFloat(v, 'f', -1, 64))
 	}
-	m.sortDesc = false // the next sort starts from the slowest again
+	m.sortDesc, m.sorted = false, false // the next sort starts from the slowest again
 	return m, status, ""
+}
+
+// maybeResort sorts the queue again, in the direction it was sorted in, once
+// every song a radio added is in the queue and analysed (or failed to be): the
+// new songs are sorted in without :sort being pressed twice.
+func (m Model) maybeResort() (Model, tea.Cmd) {
+	if len(m.resortIDs) == 0 || m.queueBusy {
+		return m, nil
+	}
+	if !m.autoDJ || !m.sorted {
+		m.resortIDs = nil
+		return m, nil
+	}
+	inQueue := map[string]bool{}
+	for _, e := range m.upcoming() {
+		inQueue[yt.KeyOf(e.Filename)] = true
+	}
+	for id := range m.resortIDs {
+		st := m.stats[id]
+		if !inQueue[id] || (!st.hasRes && !st.analysisFailed && m.deps.Analyze != nil) {
+			return m, nil
+		}
+	}
+	m.resortIDs = nil
+	m.sortDesc = !m.sortDesc // sorting flips it: this keeps the direction of the next :sort
+	return m.sortQueueByBPM()
 }
 
 // sortQueueByBPM orders the upcoming songs by tempo, slowest (chillest) first;
@@ -1359,7 +1393,7 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 			cursor = k + 1 // the selection stays on the same song
 		}
 	}
-	m.playlist, m.djCursor, m.sortDesc = pl, cursor, !desc
+	m.playlist, m.djCursor, m.sortDesc, m.sorted = pl, cursor, !desc, true
 	m.scrollDJ()
 	m.queueBusy = true
 
@@ -1458,6 +1492,12 @@ func (m Model) handleRadioDone(msg radioDoneMsg) (Model, tea.Cmd) {
 	}
 	if m.currentEntry() != nil {
 		m.rememberQueue("radio")
+	}
+	if m.sorted { // keep it sorted: the new songs are sorted in once they are analysed (if autodj is still on)
+		m.resortIDs = map[string]bool{}
+		for _, r := range msg.results {
+			m.resortIDs[r.ID] = true
+		}
 	}
 	p := m.deps.Player
 	return m, tea.Batch(

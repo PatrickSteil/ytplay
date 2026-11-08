@@ -72,6 +72,8 @@ the queue after Tab.
 | `:quit` | `:q` | quit |
 
 The playing song's key (in the line under its title) and its row in the queue are drawn in the colour of its Camelot key.
+While `:auto` is on and the queue was sorted with `:sort`, songs added by `:radio` are sorted in as soon as they have been analysed (in the direction of the last sort), so `:sort` does not need to be pressed twice.
+
 A search looks at YouTube and SoundCloud at the same time (10 results each, interleaved), and a
 coloured dot in front of every song says where it is from: red for YouTube, orange for SoundCloud (also in the queue and
 the DJ popup). If one of them fails the other's results are shown and the status says which failed. Cover, description,

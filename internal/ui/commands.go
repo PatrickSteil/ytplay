@@ -471,7 +471,7 @@ func cmdShuffle(m Model, _ string) (Model, tea.Cmd) {
 		pl[base+k] = m.playlist[base+i]
 		urls[k] = pl[base+k].Filename
 	}
-	m.playlist, m.sortDesc = pl, false
+	m.playlist, m.sortDesc, m.sorted = pl, false, false
 	m.clampDJ()
 	m.queueBusy = true
 	p := m.deps.Player
