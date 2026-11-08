@@ -111,6 +111,7 @@ func runTUI(ytdlp, mpvPath string) int {
 	m := ui.New(ui.Deps{
 		Publish: publish,
 		Cover:   covers.Get,
+		Copy:    func(text string) error { return copyToClipboard(text, os.Stdout) },
 		Search: func(ctx context.Context, q string) ([]yt.Result, map[yt.Source]error, error) {
 			return yt.SearchAll(ctx, ytdlp, q, 10)
 		},

@@ -48,6 +48,12 @@ const (
 	actionTimeout = 3 * time.Second
 )
 
+// yankDoneMsg is the result of copying a link.
+type yankDoneMsg struct {
+	title string
+	err   error
+}
+
 // coverMsg is the result of a cover download. rendered is empty on failure.
 type coverMsg struct {
 	id       string

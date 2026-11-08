@@ -36,6 +36,7 @@ var commands = []command{
 	{name: "find", short: []string{"f"}, run: cmdFind, usage: ":find NAME", about: "search for NAME, or load a YouTube link (no name: open the bar)"},
 	{name: "add", run: cmdAdd, usage: ":add", about: "add the highlighted result to the queue"},
 	{name: "load", short: []string{"l"}, run: cmdLoad, usage: ":load LINK", about: "add a YouTube or SoundCloud playlist, set or song link to the queue"},
+	{name: "yank", short: []string{"y"}, run: cmdYank, inPopup: true, usage: ":yank", about: "copy the link of the highlighted (or playing) song"},
 	{name: "play", run: cmdPlay, usage: ":play", about: "play the highlighted song now (Enter does too)"},
 	{name: "skip", short: []string{"s"}, run: cmdSkip, usage: ":skip", about: "skip to the next song"},
 	{name: "prev", short: []string{"p"}, run: cmdPrev, usage: ":prev", about: "the song before (or the start of this one)"},
@@ -275,6 +276,35 @@ func cmdDownload(m Model, _ string) (Model, tea.Cmd) {
 		return m.openDownload(yt.Result{ID: yt.KeyOf(e.Filename), Title: title, Channel: channel, Duration: dur})
 	}
 	return m.downloadPlaying()
+}
+
+// cmdYank copies the link of the highlighted song (in the results, the queue or
+// the DJ popup), or of the playing one.
+func cmdYank(m Model, _ string) (Model, tea.Cmd) {
+	var key, title string
+	fromEntry := func(e playlistEntry) { key = yt.KeyOf(e.Filename); title, _, _ = m.entryInfo(e) }
+	switch {
+	case m.mode == modeResults && len(m.results) > 0:
+		key, title = m.results[m.selected].ID, m.results[m.selected].Title
+	case m.mode == modeQueue && len(m.upcoming()) > 0:
+		fromEntry(m.upcoming()[m.queueCursor])
+	case m.mode == modeDJ && m.djRowCount() > 0:
+		fromEntry(m.djEntry(m.djCursor))
+	case m.currentEntry() != nil:
+		fromEntry(*m.currentEntry())
+	}
+	link := yt.URLOf(key)
+	if link == "" {
+		status := m.setStatus("Nothing to copy", false)
+		return m, status
+	}
+	if m.deps.Copy == nil {
+		status := m.setStatus("Copying is not available", true)
+		return m, status
+	}
+	title = safe(title)
+	copyText := m.deps.Copy
+	return m, func() tea.Msg { return yankDoneMsg{title: title, err: copyText(link)} }
 }
 
 func cmdAuto(m Model, _ string) (Model, tea.Cmd) { return m.toggleAutoDJ() }

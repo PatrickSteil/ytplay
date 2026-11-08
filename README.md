@@ -51,6 +51,7 @@ the queue after Tab.
 | `:find NAME` | `:f` | search for NAME (without a name: open the search bar) |
 | `:add` | | add the highlighted result to the queue |
 | `:load LINK` | `:l` | add a YouTube or SoundCloud playlist (or set) link to the queue, every song in it (the first 500; private and deleted ones are skipped); a song link queues that one song (a YouTube watch link that carries `list=` counts as the playlist; short `on.soundcloud.com` links are not accepted). A link pasted into the `/` search bar or after `:find` does the same instead of searching. It starts playing if nothing is, and `u` undoes it |
+| `:yank` | `:y` | copy the link of the highlighted result, queue entry or DJ popup row (the playing song if nothing is highlighted) to the clipboard: with `wl-copy`, `xclip`, `xsel` or `pbcopy` if installed, else through the terminal (OSC 52) |
 | `:play` | | play the highlighted result or queue entry now (Enter does the same) |
 | `:skip` | `:s` | skip |
 | `:prev` | `:p` | the song before; if this one has played for more than 3 s, its start |

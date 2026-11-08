@@ -97,6 +97,8 @@ type Deps struct {
 	// Download saves the audio of a video to a file (nil: no downloads).
 	Download func(ctx context.Context, id, path string) error
 	// Cover returns the rendered cover for a video ID (nil: no covers).
+	// Copy puts text on the clipboard (nil: no clipboard).
+	Copy  func(text string) error
 	Cover func(ctx context.Context, id, thumb string) (string, error)
 }
 
@@ -394,6 +396,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		queued := m.startQueuedAnalyses() // a slot is free
 		m, sorted := m.maybeResort()
 		return m, tea.Batch(queued, sorted)
+
+	case yankDoneMsg:
+		if msg.err != nil {
+			return m, m.setStatus("Could not copy the link: "+msg.err.Error(), true)
+		}
+		return m, m.setStatus("Copied the link of "+msg.title, false)
 
 	case coverMsg:
 		if msg.err == nil && msg.rendered != "" {
