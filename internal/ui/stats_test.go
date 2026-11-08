@@ -126,7 +126,8 @@ func TestStatsAreNotFetchedTwiceForTheSameTrack(t *testing.T) {
 	m, cmd := startStats(t, m, "0", "*a", "b")
 	collect(cmd)
 	m, _ = update(m, infoMsg{id: "a", info: fullInfo})
-	m, _ = update(m, analysisMsg{id: "a"})
+	m, cmd = update(m, analysisMsg{id: "a"})
+	collect(cmd)                                       // the next song, b, is analysed ahead
 	m, cmd = update(m, propEvent("playlist-pos", "1")) // b
 	collect(cmd)
 	_, cmd = update(m, propEvent("playlist-pos", "0")) // back to a

@@ -72,6 +72,13 @@ the queue after Tab.
 | `:help` | `:h` | help popup (`j` `k` scroll on a small terminal) |
 | `:quit` | `:q` | quit |
 
+Silence at the ends of songs is skipped: when a song starts, ytplay jumps past leading silence (more than a second
+of it), and when the sound ends it goes on to the next song, if more than a second and a half of silence would follow. "Silence" is
+audio below 1% of the song's loudest moment (-40 dB). This uses the audible range the analysis measures, so it works for a
+song once it has been analysed: the next song in the queue is analysed (lightly) while the playing one plays, so its start
+is skipped from the first moment, while the very first song only gets its end trimmed. Autodj plans its own hand-overs;
+songs of which only part was analysed (very long tracks) are trimmed where the analysis knows.
+
 The playing song's key (in the line under its title) and its row in the queue are drawn in the colour of its Camelot key.
 While `:auto` is on and the queue was sorted with `:sort`, songs added by `:radio` are sorted in as soon as they have been analysed (in the direction of the last sort), so `:sort` does not need to be pressed twice.
 

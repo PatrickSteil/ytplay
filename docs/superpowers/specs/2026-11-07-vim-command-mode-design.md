@@ -184,6 +184,12 @@ view.
   allow-listed hosts), description, statistics and comments work for both; `:load` takes SoundCloud
   track and set links. DRM-protected tracks cannot be told apart in search results, so a play
   failure says "it may be protected or removed". `:radio` uses the YouTube songs only.
+- Silence at the start and end of songs is skipped (not a command): the light analysis also
+  reports the audible range (first and last 20 ms frame above 1% of the loudest, the same
+  measure the planner uses), the player seeks past more than 1 s of leading silence once per
+  song, goes on at the end of the sound if more than 1.5 s of silence follows (preload is
+  timed by the sound's end too), and the song after the playing one is analysed lightly
+  ahead of time. Not while autodj is on (it plans its own hand-overs).
 - The hints at the bottom right are per state (nothing playing, playing, results,
   queue, search bar, DJ popup, help, the questions, the download popup). A test
   uses every hint in its state and checks that it changes something and that the

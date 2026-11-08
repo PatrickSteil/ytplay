@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/PatrickSteil/ytplay/internal/analyze"
+	"github.com/PatrickSteil/ytplay/internal/autodj"
 	"github.com/PatrickSteil/ytplay/internal/yt"
 )
 
@@ -90,15 +91,38 @@ func closePopup(m Model) Model {
 	return m
 }
 
-func TestWithoutTheDJPopupOnlyThePlayingSongIsAnalysedLight(t *testing.T) {
+func TestWithoutTheDJPopupOnlyThePlayingAndTheNextSongAreAnalysedLight(t *testing.T) {
 	f := &levelFakes{}
 	m := levelModel(f)
 	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c", "d")
-	collect(cmd)
+	msgs := collect(cmd)
 	m, cmd = update(m, plEvent(t, "*a", "b", "c", "d", "e")) // the queue changes too
 	collect(cmd)
 	if want := []levelCall{{"a", analyze.Light}}; !reflect.DeepEqual(f.calls, want) {
-		t.Errorf("analysed %v, want only the playing song, light, until someone opens the DJ popup", f.calls)
+		t.Fatalf("analysed %v, want the playing song first and alone", f.calls)
+	}
+	m, cmd = bpmDeliver(t, m, msgs, "a") // its result is in: the next one is looked at
+	msgs = collect(cmd)
+	if want := []levelCall{{"a", analyze.Light}, {"b", analyze.Light}}; !reflect.DeepEqual(f.calls, want) {
+		t.Fatalf("analysed %v, want the next song, light, once the playing one is done", f.calls)
+	}
+	m, cmd = bpmDeliver(t, m, msgs, "b")
+	collect(cmd)
+	if want := []levelCall{{"a", analyze.Light}, {"b", analyze.Light}}; !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("analysed %v: only the next song is analysed ahead, until someone opens the DJ popup", f.calls)
+	}
+}
+
+func TestTheAnalysisLookupIsHandedToThePlayerWhenTheProgramStarts(t *testing.T) {
+	var lookup func(url string) (autodj.Song, bool)
+	m := New(Deps{Player: &fakeActions{}, SetTrim: func(l func(url string) (autodj.Song, bool)) { lookup = l }})
+	m.Init()
+	if lookup == nil {
+		t.Fatal("the player was not given the lookup")
+	}
+	m.songs.put("abc", autodj.Song{Length: 200, Edges: analyze.Edges{AudioStart: 4, AudioEnd: 190}})
+	if s, ok := lookup("https://www.youtube.com/watch?v=abc"); !ok || s.Edges.AudioStart != 4 {
+		t.Errorf("lookup gave %+v %v", s, ok)
 	}
 }
 
@@ -107,7 +131,8 @@ func TestOpeningTheDJPopupAnalysesFourSongsAtATimeFull(t *testing.T) {
 	m := levelModel(f)
 	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c", "d", "e", "f")
 	msgs := collect(cmd)
-	m, _ = bpmDeliver(t, m, msgs, "a") // the playing song has its light result
+	m, cmd = bpmDeliver(t, m, msgs, "a")       // the playing song has its light result
+	m, _ = bpmDeliver(t, m, collect(cmd), "b") // and so has the next one, which is analysed ahead
 	m, cmd = openDJ(t, m)
 	msgs = collect(cmd)
 	// the playing song is upgraded and the next three queued: four in flight
@@ -215,7 +240,8 @@ func TestClearingTheQueueStartsNoAnalysesForRemovedSongs(t *testing.T) {
 	f := &levelFakes{}
 	m := levelModel(f)
 	m, cmd := bpmPlaying(t, m, 0, "a", "b", "c", "d", "e", "f")
-	m, _ = bpmDeliver(t, m, collect(cmd), "a")
+	m, cmd = bpmDeliver(t, m, collect(cmd), "a")
+	m, _ = bpmDeliver(t, m, collect(cmd), "b") // the next song, analysed ahead
 	m, cmd = openDJ(t, m)
 	msgs := collect(cmd)
 	if got := f.full(); !slices.Equal(got, []string{"a", "b", "c", "d"}) {

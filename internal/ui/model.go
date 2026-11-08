@@ -97,6 +97,9 @@ type Deps struct {
 	// Download saves the audio of a video to a file (nil: no downloads).
 	Download func(ctx context.Context, id, path string) error
 	// Cover returns the rendered cover for a video ID (nil: no covers).
+	// SetTrim hands the player the lookup of what is known about songs (where
+	// their sound starts and ends), so that it can skip silence. Called at start.
+	SetTrim func(songs func(url string) (autodj.Song, bool))
 	// Copy puts text on the clipboard (nil: no clipboard).
 	Copy  func(text string) error
 	Cover func(ctx context.Context, id, thumb string) (string, error)
@@ -258,7 +261,12 @@ func New(d Deps) Model {
 	}
 }
 
-func (m Model) Init() tea.Cmd { return tick() }
+func (m Model) Init() tea.Cmd {
+	if m.deps.SetTrim != nil {
+		m.deps.SetTrim(m.songs.lookup)
+	}
+	return tick()
+}
 
 func tick() tea.Cmd {
 	return tea.Tick(tickEvery, func(time.Time) tea.Msg { return tickMsg{} })
@@ -514,8 +522,11 @@ func (m *Model) needsFull(id string) bool {
 // has a light one) and of upcoming songs, nearest first, while fewer than
 // queueAnalysisWorkers run. A song is asked about once: a failure is not retried.
 func (m *Model) startQueuedAnalyses() tea.Cmd {
-	if m.deps.Analyze == nil || !m.djActive {
-		return nil // beat grids and queued songs are only analysed for the DJ popup
+	if m.deps.Analyze == nil {
+		return nil
+	}
+	if !m.djActive {
+		return m.analyseNextLight() // beat grids and the whole queue are only analysed for the DJ popup
 	}
 	wanted := m.upcoming()
 	if cur := m.currentEntry(); cur != nil {
@@ -542,6 +553,33 @@ func (m *Model) startQueuedAnalyses() tea.Cmd {
 		})
 	}
 	return tea.Batch(cmds...)
+}
+
+// analyseNextLight analyses the song after the playing one, lightly, once the
+// playing song's own analysis is done, so that where its sound starts is known
+// when it comes on and its silent start can be skipped. Asked once.
+func (m *Model) analyseNextLight() tea.Cmd {
+	up := m.upcoming()
+	if len(up) == 0 || m.currentEntry() == nil {
+		return nil
+	}
+	cur, id := m.currentID(), yt.KeyOf(up[0].Filename)
+	if id == "" || m.analysisAsked[id] {
+		return nil
+	}
+	if st := m.stats[cur]; cur != "" && !st.hasRes && !st.analysisFailed {
+		return nil // the playing song first (its analysis is not asked for until a moment after it starts)
+	}
+	m.analysisAsked[id] = true
+	m.queueRunning[id] = true
+	analyse, duration, ctx := m.deps.Analyze, m.tracks[id].Duration, m.queueCtx
+	return func() tea.Msg {
+		res, err := analyse(ctx, id, duration, analyze.Light)
+		if ctx.Err() != nil {
+			err = context.Canceled
+		}
+		return analysisMsg{id: id, res: res, err: err}
+	}
 }
 
 // fetchStats starts the description and tempo/key lookups for the current
