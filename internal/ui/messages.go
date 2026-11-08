@@ -48,6 +48,19 @@ const (
 	actionTimeout = 3 * time.Second
 )
 
+// castListMsg is the answer to looking for speakers.
+type castListMsg struct {
+	names []string
+	err   error
+}
+
+// castDoneMsg is the answer to starting or ending casting.
+type castDoneMsg struct {
+	name string // the speaker, "" when casting ended
+	off  bool
+	err  error
+}
+
 // yankDoneMsg is the result of copying a link.
 type yankDoneMsg struct {
 	title string

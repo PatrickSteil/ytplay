@@ -37,6 +37,7 @@ var commands = []command{
 	{name: "add", run: cmdAdd, usage: ":add", about: "add the highlighted result to the queue"},
 	{name: "load", short: []string{"l"}, run: cmdLoad, usage: ":load LINK", about: "add a YouTube or SoundCloud playlist, set or song link to the queue"},
 	{name: "yank", short: []string{"y"}, run: cmdYank, inPopup: true, usage: ":yank", about: "copy the link of the highlighted (or playing) song"},
+	{name: "cast", run: cmdCast, usage: ":cast [NAME|off]", about: "play on a speaker (Chromecast, Google Home); without a name: list them; off: play here again"},
 	{name: "play", run: cmdPlay, usage: ":play", about: "play the highlighted song now (Enter does too)"},
 	{name: "skip", short: []string{"s"}, run: cmdSkip, usage: ":skip", about: "skip to the next song"},
 	{name: "prev", short: []string{"p"}, run: cmdPrev, usage: ":prev", about: "the song before (or the start of this one)"},
@@ -305,6 +306,42 @@ func cmdYank(m Model, _ string) (Model, tea.Cmd) {
 	title = safe(title)
 	copyText := m.deps.Copy
 	return m, func() tea.Msg { return yankDoneMsg{title: title, err: copyText(link)} }
+}
+
+// cmdCast lists the speakers, plays on one, or goes back to playing here.
+func cmdCast(m Model, arg string) (Model, tea.Cmd) {
+	say := func(text string, isErr bool) (Model, tea.Cmd) {
+		status := m.setStatus(text, isErr)
+		return m, status
+	}
+	switch {
+	case m.deps.Cast == nil || m.deps.Devices == nil || m.deps.CastOff == nil:
+		return say("Casting is not available", true)
+	case m.castBusy:
+		return say("Still looking for the speaker…", false)
+	}
+	ctx := m.queueCtx
+	switch arg = strings.TrimSpace(arg); arg {
+	case "":
+		m.castBusy = true
+		m.setStickyStatus("Looking for speakers…")
+		devices := m.deps.Devices
+		return m, func() tea.Msg {
+			names, err := devices(ctx)
+			return castListMsg{names: names, err: err}
+		}
+	case "off":
+		m.castBusy = true
+		off := m.deps.CastOff
+		return m, func() tea.Msg { return castDoneMsg{off: true, err: off(ctx)} }
+	}
+	m.castBusy = true
+	m.setStickyStatus("Connecting to " + arg + "…")
+	cast := m.deps.Cast
+	return m, func() tea.Msg {
+		name, err := cast(ctx, arg)
+		return castDoneMsg{name: name, err: err}
+	}
 }
 
 func cmdAuto(m Model, _ string) (Model, tea.Cmd) { return m.toggleAutoDJ() }

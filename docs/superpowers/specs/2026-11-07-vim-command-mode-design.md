@@ -190,6 +190,13 @@ view.
   song, goes on at the end of the sound if more than 1.5 s of silence follows (preload is
   timed by the sound's end too), and the song after the playing one is analysed lightly
   ahead of time. Not while autodj is on (it plans its own hand-overs).
+- `:cast [NAME|off]`: plays on a Chromecast or Google Home speaker found by mDNS (`_googlecast._tcp`,
+  3 s), with a small CASTV2 client of our own (`internal/cast`: TLS to port 8009, protobuf-framed
+  JSON, the default media receiver). The player treats the speaker as a deck (`CastDeck` turns mpv
+  commands into cast commands and cast status into mpv events), so the queue, skip, pause, seek,
+  volume and silence trimming work unchanged; preload and autodj do not (one song at a time). The
+  stream address is looked up with yt-dlp (`yt.StreamURL`: AAC for YouTube, HLS for SoundCloud) and
+  the speaker fetches it itself. A lost speaker hands playback back to the local player.
 - The hints at the bottom right are per state (nothing playing, playing, results,
   queue, search bar, DJ popup, help, the questions, the download popup). A test
   uses every hint in its state and checks that it changes something and that the

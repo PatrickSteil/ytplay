@@ -23,6 +23,7 @@ import (
 
 	"github.com/PatrickSteil/ytplay/internal/analyze"
 	"github.com/PatrickSteil/ytplay/internal/autodj"
+	"github.com/PatrickSteil/ytplay/internal/cast"
 	"github.com/PatrickSteil/ytplay/internal/cover"
 	"github.com/PatrickSteil/ytplay/internal/mpris"
 	"github.com/PatrickSteil/ytplay/internal/mpv"
@@ -111,6 +112,37 @@ func runTUI(ytdlp, mpvPath string) int {
 	m := ui.New(ui.Deps{
 		Publish: publish,
 		Cover:   covers.Get,
+		Devices: func(ctx context.Context) ([]string, error) {
+			ds, err := cast.Discover(ctx, 3*time.Second)
+			names := make([]string, len(ds))
+			for i, d := range ds {
+				names[i] = d.Name
+			}
+			return names, err
+		},
+		Cast: func(ctx context.Context, name string) (string, error) {
+			ds, err := cast.Discover(ctx, 3*time.Second)
+			if err != nil {
+				return "", err
+			}
+			dev, err := cast.Find(ds, name)
+			if err != nil {
+				return "", err
+			}
+			client, err := cast.Dial(ctx, dev.Addr)
+			if err != nil {
+				return "", err
+			}
+			deck := player.NewCastDeck(dev.Name, client, func(ctx context.Context, songURL string) (string, string, error) {
+				return yt.StreamURL(ctx, ytdlp, songURL)
+			})
+			if err := pl.CastTo(ctx, dev.Name, deck); err != nil {
+				_ = deck.Close()
+				return "", err
+			}
+			return dev.Name, nil
+		},
+		CastOff: pl.CastOff,
 		SetTrim: func(songs func(url string) (autodj.Song, bool)) { pl.SetTrim(songs) },
 		Copy:    func(text string) error { return copyToClipboard(text, os.Stdout) },
 		Search: func(ctx context.Context, q string) ([]yt.Result, map[yt.Source]error, error) {

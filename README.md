@@ -52,6 +52,7 @@ the queue after Tab.
 | `:add` | | add the highlighted result to the queue |
 | `:load LINK` | `:l` | add a YouTube or SoundCloud playlist (or set) link to the queue, every song in it (the first 500; private and deleted ones are skipped); a song link queues that one song (a YouTube watch link that carries `list=` counts as the playlist; short `on.soundcloud.com` links are not accepted). A link pasted into the `/` search bar or after `:find` does the same instead of searching. It starts playing if nothing is, and `u` undoes it |
 | `:yank` | `:y` | copy the link of the highlighted result, queue entry or DJ popup row (the playing song if nothing is highlighted) to the clipboard: with `wl-copy`, `xclip`, `xsel` or `pbcopy` if installed, else through the terminal (OSC 52) |
+| `:cast [NAME\|off]` | | play on a speaker in the same network (Chromecast, Google Home, Nest): without a name it lists them, with a name (or a part of it) the playing song goes on there from where it was and the queue keeps playing there, `off` plays here again. The speaker fetches the audio itself, so this needs no extra software; volume, pause and seek go to the speaker |
 | `:play` | | play the highlighted result or queue entry now (Enter does the same) |
 | `:skip` | `:s` | skip |
 | `:prev` | `:p` | the song before; if this one has played for more than 3 s, its start |
@@ -71,6 +72,12 @@ the queue after Tab.
 | `:clear` | `:X` | clear the queue (asks first: `y` or `n`; the playing song keeps going) |
 | `:help` | `:h` | help popup (`j` `k` scroll on a small terminal) |
 | `:quit` | `:q` | quit |
+
+Casting (`:cast`) plays one song at a time on the speaker, which loads the stream from YouTube (AAC) or SoundCloud (HLS)
+by itself: autodj mixes and beat-matching only happen on this computer and are switched off while casting (silence
+trimming keeps working). A song needs a few seconds to start (its stream address is looked up first). If the speaker goes
+away, playback comes back to this computer from where it was. Songs that cannot be streamed (DRM protected, or blocked
+for the speaker) are skipped with "Could not play".
 
 Silence at the ends of songs is skipped: when a song starts, ytplay jumps past leading silence (more than a second
 of it), and when the sound ends it goes on to the next song, if more than a second and a half of silence would follow. "Silence" is

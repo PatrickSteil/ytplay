@@ -226,7 +226,7 @@ func (m Model) progressLine() string {
 		icon = "⏸"
 	}
 	if m.loading {
-		return th.accent.Render(icon) + " " + dim.Render("Loading…")
+		return th.accent.Render(icon) + " " + dim.Render("Loading…") + m.onSpeaker()
 	}
 	total := "--:--"
 	if m.total > 0 {
@@ -237,7 +237,15 @@ func (m Model) progressLine() string {
 	if m.total > 0 {
 		pct = fmt.Sprintf(" %d%%", int(min(max(m.elapsed/m.total, 0), 1)*100+0.5))
 	}
-	return th.accent.Render(strings.TrimRight(prefix, " ")) + pct
+	return th.accent.Render(strings.TrimRight(prefix, " ")) + pct + m.onSpeaker()
+}
+
+// onSpeaker says which speaker the sound comes from while casting.
+func (m Model) onSpeaker() string {
+	if m.castName == "" {
+		return ""
+	}
+	return dim.Render(" · on " + safe(m.castName))
 }
 
 // queueWindowSize is how many upcoming entries the queue shows at once.

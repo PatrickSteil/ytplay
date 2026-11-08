@@ -97,6 +97,12 @@ type Deps struct {
 	// Download saves the audio of a video to a file (nil: no downloads).
 	Download func(ctx context.Context, id, path string) error
 	// Cover returns the rendered cover for a video ID (nil: no covers).
+	// Devices lists the speakers on the network (cast devices) by name, Cast moves
+	// playback to the one called name (a part of the name will do) and returns its
+	// full name, CastOff brings it back. nil: no casting.
+	Devices func(ctx context.Context) ([]string, error)
+	Cast    func(ctx context.Context, name string) (string, error)
+	CastOff func(ctx context.Context) error
 	// SetTrim hands the player the lookup of what is known about songs (where
 	// their sound starts and ends), so that it can skip silence. Called at start.
 	SetTrim func(songs func(url string) (autodj.Song, bool))
@@ -198,8 +204,10 @@ type Model struct {
 	cmdHistory []string
 	cmdHistPos int
 	cmdDraft   string
-	helpOff    int  // how far the help popup is scrolled
-	loadBusy   bool // a link is being loaded
+	helpOff    int    // how far the help popup is scrolled
+	loadBusy   bool   // a link is being loaded
+	castName   string // the speaker being played on, "" when playing here
+	castBusy   bool   // looking for speakers or connecting to one
 	// undo are the upcoming queues before the last edits, newest last; they are
 	// forgotten when the song changes (what is "upcoming" is then another list).
 	undo []undoEntry
@@ -405,6 +413,26 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, sorted := m.maybeResort()
 		return m, tea.Batch(queued, sorted)
 
+	case castListMsg:
+		m.castBusy = false
+		switch {
+		case msg.err != nil:
+			return m, m.setStatus("Could not look for speakers: "+msg.err.Error(), true)
+		case len(msg.names) == 0:
+			return m, m.setStatus("No speakers found on the network", true)
+		}
+		return m, m.setStatus("Speakers: "+strings.Join(msg.names, ", ")+" (:cast NAME plays there, :cast off comes back)", false)
+
+	case castDoneMsg:
+		m.castBusy = false
+		switch {
+		case msg.err != nil:
+			return m, m.setStatus("Could not cast: "+msg.err.Error(), true)
+		case msg.off:
+			return m, m.setStatus("Playing here again", false)
+		}
+		return m, m.setStatus("Casting to "+msg.name, false)
+
 	case yankDoneMsg:
 		if msg.err != nil {
 			return m, m.setStatus("Could not copy the link: "+msg.err.Error(), true)
@@ -466,6 +494,12 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 			if err := json.Unmarshal(ev.Data, &pl); err == nil {
 				m.playlist = pl
 			}
+		}
+	case "cast":
+		m.castName = ev.Reason
+		if ev.Reason == "lost" {
+			m.castName = ""
+			return m, m.setStatus("Lost the speaker: playing here again", true)
 		}
 	case "end-file":
 		if ev.Reason == "error" {
