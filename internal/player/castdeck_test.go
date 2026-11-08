@@ -416,3 +416,23 @@ func TestASongThatIsReplacedWhileLoadingIsCancelled(t *testing.T) {
 		t.Error("the replaced song's work was not cancelled")
 	}
 }
+
+func TestClosingTheDeckStopsThePlaybackOnTheSpeaker(t *testing.T) {
+	r := newFakeRemote()
+	d := newCastDeck(r, resolveTo(map[string]string{"a": "http://s/a"}))
+	loadfile(t, d, "a")
+	waitLoaded(t, r)
+	r.took()
+	_ = d.Close()
+	got := r.took()
+	if len(got) != 2 || got[0] != "stop" || got[1] != "close" {
+		t.Errorf("calls %v, want stop, then close", got)
+	}
+	// a deck that never played has nothing to stop
+	r2 := newFakeRemote()
+	d2 := newCastDeck(r2, resolveTo(nil))
+	_ = d2.Close()
+	if got := r2.took(); len(got) != 1 || got[0] != "close" {
+		t.Errorf("calls %v", got)
+	}
+}

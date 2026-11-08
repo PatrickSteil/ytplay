@@ -296,13 +296,21 @@ func (d *CastDeck) Events() <-chan mpv.Event { return d.events }
 func (d *CastDeck) Done() <-chan struct{}    { return d.done }
 func (d *CastDeck) StderrTail() string       { return "" }
 
-// Close drops the connection to the device.
+// Close stops what plays on the device and drops the connection: closing the
+// player is the same as stopping the music.
 func (d *CastDeck) Close() error {
 	d.mu.Lock()
 	if d.cancel != nil {
 		d.cancel()
 	}
+	up := d.launched
+	d.launched = false
 	d.mu.Unlock()
+	if up {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = d.r.Stop(ctx)
+		cancel()
+	}
 	d.r.Close()
 	d.finish()
 	return nil
