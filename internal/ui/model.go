@@ -175,8 +175,14 @@ type Model struct {
 	queueCtx     context.Context // lives until the app quits, unlike statsCancel
 	queueCancel  context.CancelFunc
 	statsCancel  context.CancelFunc // cancels the lookups of the previous track
-	statsDelay   time.Duration
-	coverAsked   map[string]bool // IDs already requested (success or failure): never retried
+	statsID      string             // the track statsCancel belongs to
+	// Preview of the selected search result (wide layout): lookups only start
+	// once the selection has rested for previewDelay.
+	previewDelay  time.Duration
+	previewCancel context.CancelFunc // cancels the lookup for the result left behind
+	previewID     string             // song the running preview lookup is for
+	statsDelay    time.Duration
+	coverAsked    map[string]bool // IDs already requested (success or failure): never retried
 
 	// Queue editing. queueCursor indexes the entries after the current one.
 	queueCursor int
@@ -376,7 +382,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case infoMsg:
 		if errors.Is(msg.err, context.Canceled) {
-			delete(m.infoAsked, msg.id) // interrupted: try again next time
+			if !m.statsLive(msg.id) {
+				delete(m.infoAsked, msg.id) // interrupted: try again next time
+			}
 			return m, nil
 		}
 		st := m.stats[msg.id]
@@ -397,8 +405,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case analysisMsg:
 		delete(m.queueRunning, msg.id)
 		if errors.Is(msg.err, context.Canceled) {
-			delete(m.analysisAsked, msg.id)
-			delete(m.fullAsked, msg.id)
+			if !m.statsLive(msg.id) {
+				delete(m.analysisAsked, msg.id)
+				delete(m.fullAsked, msg.id)
+			}
 			return m, nil
 		}
 		st := m.stats[msg.id]
@@ -619,17 +629,34 @@ func (m *Model) analyseNextLight() tea.Cmd {
 // fetchStats starts the description and tempo/key lookups for the current
 // track (after a short delay) and cancels those of the previous one.
 func (m *Model) fetchStats(id string) tea.Cmd {
+// statsLive says whether the lookups of track id are the ones running now, so a
+// report that an earlier, cancelled attempt at them was interrupted is old news.
+func (m Model) statsLive(id string) bool { return m.statsCancel != nil && m.statsID == id }
+
 	if m.statsCancel != nil {
 		m.statsCancel()
 		m.statsCancel = nil
 	}
 	wantInfo := id != "" && m.deps.Info != nil && !m.infoAsked[id]
 	wantAnalysis := id != "" && m.deps.Analyze != nil && !m.analysisAsked[id]
+		// What the cancelled track had not got yet is asked for again when it
+		// returns. This is done here, not when the cancelled lookups report back:
+		// if the same track starts again at once (the queue was replaced with it)
+		// that would be too late, and it would never be analysed.
+		prev, st := m.statsID, m.stats[m.statsID]
+		if !st.hasInfo && !st.infoFailed {
+			delete(m.infoAsked, prev)
+		}
+		if !st.hasRes && !st.analysisFailed && !m.queueRunning[prev] {
+			delete(m.analysisAsked, prev)
+			delete(m.fullAsked, prev)
+		}
+		m.statsID = ""
 	if !wantInfo && !wantAnalysis {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m.statsCancel = cancel
+	m.statsCancel, m.statsID = cancel, id
 	delay := m.statsDelay
 	// wait returns false if the track changed before the delay was over.
 	wait := func() bool {
