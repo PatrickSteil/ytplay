@@ -153,18 +153,22 @@ func TestCancelledFetchIsRetriedLater(t *testing.T) {
 	}
 }
 
-func TestStatsFailureIsSilentAndNotRetried(t *testing.T) {
+func TestStatsFailureShowsInTheTempoLineNotTheStatusAndIsNotRetriedForever(t *testing.T) {
 	var f statsFakes
 	m := statsModel(&f)
 	m, _ = startStats(t, m, "0", "*a", "b")
 	m, _ = update(m, infoMsg{id: "a", err: errors.New("ERROR: unavailable")})
-	m, _ = update(m, analysisMsg{id: "a", err: errors.New("no audio")})
+	m, _ = update(m, analysisMsg{id: "a", err: errors.New("no audio")}) // tried once more after a moment
+	m, _ = update(m, analysisMsg{id: "a", err: errors.New("no audio")}) // and given up
 	if m.status != "" {
-		t.Errorf("a failed lookup must not show an error, got %q", m.status)
+		t.Errorf("a failed lookup must not fill the status line, got %q", m.status)
 	}
 	out := m.View()
-	if strings.Contains(out, "analysing") || strings.Contains(out, "BPM") {
-		t.Errorf("failed stats should leave no trace:\n%s", out)
+	if !strings.Contains(out, "analysis failed: no audio") {
+		t.Errorf("the tempo line should say the analysis failed and why:\n%s", out)
+	}
+	if strings.Contains(out, "BPM") {
+		t.Errorf("there is no tempo to show:\n%s", out)
 	}
 	m, _ = update(m, propEvent("playlist-pos", "1"))
 	_, cmd := update(m, propEvent("playlist-pos", "0"))

@@ -141,12 +141,21 @@ func TestFailedAnalysisIsNotRetriedInALoop(t *testing.T) {
 	msgs := collect(cmd)
 	m, cmd = openDJ(t, m)
 	msgs = append(msgs, collect(cmd)...)
-	m, cmd = bpmDeliver(t, m, msgs, "b")
+	m, cmd = bpmDeliver(t, m, msgs, "b") // b failed: it is tried once more, after a moment
 	collect(cmd)
-	m, cmd = bpmPlaying(t, m, 0, "a", "b", "c") // the playlist changes again
+	m, cmd = bpmPlaying(t, m, 0, "a", "b", "c") // the playlist changes meanwhile
 	collect(cmd)
 	if n := strings.Count(strings.Join(f.asked(), ""), "b"); n != 1 {
-		t.Errorf("b was analysed %d times, want 1", n)
+		t.Errorf("b was analysed %d times before the retry, want 1", n)
+	}
+	m, cmd = update(m, retryAnalysisMsg{id: "b"}) // the moment is over
+	for _, msg := range collect(cmd) {
+		m, _ = update(m, msg)
+	}
+	m, cmd = bpmPlaying(t, m, 0, "a", "b", "c") // and the playlist changes again
+	collect(cmd)
+	if n := strings.Count(strings.Join(f.asked(), ""), "b"); n != 2 {
+		t.Errorf("b was analysed %d times, want 2 (the first and one retry)", n)
 	}
 	if !m.stats["b"].analysisFailed {
 		t.Error("the failure should be remembered")

@@ -112,6 +112,15 @@ type analysisMsg struct {
 	err error
 }
 
+// retryAnalysisMsg fires analysisRetryDelay after an analysis failed for the
+// first time: the song is analysed once more then.
+type retryAnalysisMsg struct{ id string }
+
+// analysisRetryDelay is how long to wait before a failed analysis is tried
+// again. Failures are mostly a stream that was slow or cut off, which a moment
+// later is over.
+const analysisRetryDelay = 5 * time.Second
+
 // statsDelay is how long a track must keep playing before its stats are
 // looked up, so skipping through songs does not start a lookup for each one.
 const statsDelay = 1200 * time.Millisecond

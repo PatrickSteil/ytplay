@@ -134,6 +134,8 @@ type trackStats struct {
 	commentsBusy               bool
 	res                        analyze.Result
 	hasRes, analysisFailed     bool
+	analysisRetried            bool   // the failed analysis was tried once more
+	analysisErr                string // why the analysis failed, once it is given up
 }
 
 // playlistEntry is one element of mpv's observed "playlist" property.
@@ -415,8 +417,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		st := m.stats[msg.id]
+		if msg.err != nil && !st.analysisRetried {
+			// Once more, after a moment. The song stays marked as asked for until
+			// then, so nothing else asks again in the meantime.
+			st.analysisRetried = true
+			m.stats[msg.id] = st
+			id := msg.id
+			return m, tea.Tick(analysisRetryDelay, func(time.Time) tea.Msg { return retryAnalysisMsg{id: id} })
+		}
 		if msg.err != nil {
-			st.analysisFailed = true
+			st.analysisFailed, st.analysisErr = true, msg.err.Error()
 		} else {
 			st.res, st.hasRes = msg.res, true
 			m.songs.put(msg.id, autodj.Song{Length: m.tracks[msg.id].Duration, Edges: msg.res.Edges})
@@ -425,6 +435,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		queued := m.startQueuedAnalyses() // a slot is free
 		m, sorted := m.maybeResort()
 		return m, tea.Batch(queued, sorted)
+
+	case retryAnalysisMsg:
+		return m.handleRetryAnalysis(msg)
 
 	case castListMsg:
 		m.castBusy = false
@@ -600,6 +613,38 @@ func (m *Model) startQueuedAnalyses() tea.Cmd {
 		})
 	}
 	return tea.Batch(cmds...)
+}
+
+// handleRetryAnalysis analyses a song once more after its analysis failed, if it
+// is still playing or queued and still has no result.
+func (m Model) handleRetryAnalysis(msg retryAnalysisMsg) (Model, tea.Cmd) {
+	id, st := msg.id, m.stats[msg.id]
+	if m.deps.Analyze == nil || st.hasRes || st.analysisFailed || m.queueRunning[id] {
+		return m, nil
+	}
+	wanted := id == m.currentID()
+	for _, e := range m.upcoming() {
+		wanted = wanted || yt.KeyOf(e.Filename) == id
+	}
+	if !wanted {
+		return m, nil
+	}
+	delete(m.analysisAsked, id)
+	delete(m.fullAsked, id)
+	if m.djActive || id != m.currentID() {
+		// the DJ features, or the song after the playing one: the usual ways
+		return m, m.startQueuedAnalyses()
+	}
+	// the playing song, lightly: all the header shows is tempo and key
+	m.analysisAsked[id], m.queueRunning[id] = true, true
+	analyse, duration, ctx := m.deps.Analyze, m.tracks[id].Duration, m.queueCtx
+	return m, func() tea.Msg {
+		res, err := analyse(ctx, id, duration, analyze.Light)
+		if ctx.Err() != nil {
+			err = context.Canceled
+		}
+		return analysisMsg{id: id, res: res, err: err}
+	}
 }
 
 // analyseNextLight analyses the song after the playing one, lightly, once the

@@ -156,7 +156,11 @@ func runTUI(ytdlp, mpvPath string) int {
 			if level == analyze.Full {
 				o.Pool = pool // light stays on one core
 			}
-			return analyze.SongWith(ctx, mpvPath, ytdlp, id, duration, o)
+			res, err := analyze.SongWith(ctx, mpvPath, ytdlp, id, duration, o)
+			if err != nil && ctx.Err() == nil {
+				slog.Debug("analysis failed", "id", id, "duration", duration, "level", level, "err", err)
+			}
+			return res, err
 		},
 		Load: func(ctx context.Context, link yt.Link) (yt.Loaded, error) {
 			return yt.LoadLink(ctx, ytdlp, link, yt.MaxPlaylist)

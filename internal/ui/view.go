@@ -723,8 +723,15 @@ func (m Model) bpmKeyLine() string {
 	case id == "":
 		return ""
 	case !st.hasRes && bpm == 0:
-		if m.deps.Analyze == nil || st.analysisFailed {
+		switch {
+		case m.deps.Analyze == nil:
 			return ""
+		case st.analysisFailed:
+			reason := strings.Join(strings.Fields(st.analysisErr), " ")
+			if reason == "" {
+				return dim.Render("analysis failed")
+			}
+			return dim.Render("analysis failed: " + clip(safe(reason), 60))
 		}
 		return dim.Render("analysing…")
 	}
