@@ -21,7 +21,7 @@ esac
 `)
 }
 
-func TestSearchAllInterleavesBothSources(t *testing.T) {
+func TestSearchAllListsYouTubeFirstThenSoundCloud(t *testing.T) {
 	script, argsFile := bothSources(t, `
 echo '{"id":"a1","title":"Y1","channel":"C","duration":10}'
 echo '{"id":"a2","title":"Y2","channel":"C","duration":10}'
@@ -36,10 +36,10 @@ echo '{"id":"7","title":"S2","extractor_key":"Soundcloud","uploader":"u","durati
 	for _, r := range got {
 		ids = append(ids, r.ID)
 	}
-	if want := "a1 sc:ralph/mix a2 sc:u/s2 a3"; strings.Join(ids, " ") != want {
+	if want := "a1 a2 a3 sc:ralph/mix sc:u/s2"; strings.Join(ids, " ") != want {
 		t.Errorf("order %q, want %q", strings.Join(ids, " "), want)
 	}
-	sc := got[1]
+	sc := got[3]
 	if sc.Source != SoundCloud || sc.Title != "Mix" || sc.Channel != "ralph" || sc.Duration != 3639.06 {
 		t.Errorf("soundcloud result %+v", sc)
 	}
