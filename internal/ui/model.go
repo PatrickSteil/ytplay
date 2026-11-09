@@ -271,7 +271,7 @@ func New(d Deps) Model {
 		tracks: map[string]yt.Result{}, pos: -1, idle: true,
 		covers: map[string]string{}, coverAsked: map[string]bool{},
 		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{}, fullAsked: map[string]bool{}, volume: 100,
-		statsDelay: statsDelay,
+		statsDelay: statsDelay, previewDelay: previewDelay,
 	}
 }
 
@@ -332,7 +332,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.input.Width = m.inputWidth()
 		m.scrollIntoView()
-		return m, nil
+		return m, m.schedulePreview()
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -395,6 +395,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.stats[msg.id] = st
 		return m, nil
+
+	case previewMsg:
+		return m.handlePreview(msg)
 
 	case moreCommentsMsg:
 		return m.handleMoreComments(msg)
@@ -626,19 +629,16 @@ func (m *Model) analyseNextLight() tea.Cmd {
 	}
 }
 
-// fetchStats starts the description and tempo/key lookups for the current
-// track (after a short delay) and cancels those of the previous one.
-func (m *Model) fetchStats(id string) tea.Cmd {
 // statsLive says whether the lookups of track id are the ones running now, so a
 // report that an earlier, cancelled attempt at them was interrupted is old news.
 func (m Model) statsLive(id string) bool { return m.statsCancel != nil && m.statsID == id }
 
+// fetchStats starts the description and tempo/key lookups for the current
+// track (after a short delay) and cancels those of the previous one.
+func (m *Model) fetchStats(id string) tea.Cmd {
 	if m.statsCancel != nil {
 		m.statsCancel()
 		m.statsCancel = nil
-	}
-	wantInfo := id != "" && m.deps.Info != nil && !m.infoAsked[id]
-	wantAnalysis := id != "" && m.deps.Analyze != nil && !m.analysisAsked[id]
 		// What the cancelled track had not got yet is asked for again when it
 		// returns. This is done here, not when the cancelled lookups report back:
 		// if the same track starts again at once (the queue was replaced with it)
@@ -652,6 +652,9 @@ func (m Model) statsLive(id string) bool { return m.statsCancel != nil && m.stat
 			delete(m.fullAsked, prev)
 		}
 		m.statsID = ""
+	}
+	wantInfo := id != "" && m.deps.Info != nil && !m.infoAsked[id]
+	wantAnalysis := id != "" && m.deps.Analyze != nil && !m.analysisAsked[id]
 	if !wantInfo && !wantAnalysis {
 		return nil
 	}
@@ -720,6 +723,62 @@ func (m Model) fetchCover(id string) tea.Cmd {
 		rendered, err := fetch(ctx, id, thumb)
 		return coverMsg{id: id, rendered: rendered, err: err}
 	}
+}
+
+// selectedResult is the highlighted search result.
+func (m Model) selectedResult() (yt.Result, bool) {
+	if m.selected < 0 || m.selected >= len(m.results) {
+		return yt.Result{}, false
+	}
+	return m.results[m.selected], true
+}
+
+// schedulePreview asks for the selected result's cover and description once
+// the selection has stayed put for previewDelay, so holding j or k does not
+// start a download and a yt-dlp run for every row passed. Nothing is shown in
+// the stacked layout, so nothing is fetched there.
+func (m Model) schedulePreview() tea.Cmd {
+	r, ok := m.selectedResult()
+	if !ok || !m.wide() || m.mode != modeResults {
+		return nil
+	}
+	return tea.Tick(m.previewDelay, func(time.Time) tea.Msg { return previewMsg{id: r.ID} })
+}
+
+// cancelPreview stops the description lookup for a result that is no longer
+// selected. A lookup for the playing song is left alone: it is that song's
+// stats now.
+func (m *Model) cancelPreview() {
+	if m.previewCancel != nil && m.previewID != m.currentID() {
+		m.previewCancel()
+	}
+	m.previewCancel, m.previewID = nil, ""
+}
+
+func (m Model) handlePreview(msg previewMsg) (Model, tea.Cmd) {
+	r, ok := m.selectedResult()
+	if !ok || r.ID != msg.id || !m.wide() {
+		return m, nil // the selection moved on
+	}
+	m.cancelPreview()
+	if _, known := m.tracks[r.ID]; !known {
+		m.tracks[r.ID] = r // its artwork address (SoundCloud) and length are needed
+	}
+	cmds := []tea.Cmd{m.fetchCover(r.ID)}
+	if m.deps.Info != nil && !m.infoAsked[r.ID] {
+		ctx, cancel := context.WithCancel(context.Background())
+		m.previewCancel, m.previewID = cancel, r.ID
+		m.infoAsked[r.ID] = true
+		fetch, id := m.deps.Info, r.ID
+		cmds = append(cmds, func() tea.Msg {
+			info, err := fetch(ctx, id, firstComments)
+			if ctx.Err() != nil {
+				err = context.Canceled
+			}
+			return infoMsg{id: id, info: info, err: err}
+		})
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // currentID is the video ID of the current entry ("" when idle).
@@ -816,6 +875,9 @@ func (m *Model) quit() tea.Cmd {
 	if m.searchCancel != nil {
 		m.searchCancel()
 	}
+	if m.previewCancel != nil {
+		m.previewCancel()
+	}
 	if m.statsCancel != nil {
 		m.statsCancel() // stops yt-dlp / mpv helpers started for the stats
 	}
@@ -900,10 +962,10 @@ func (m Model) handleSearchDone(msg searchDoneMsg) (tea.Model, tea.Cmd) {
 	for _, src := range []yt.Source{yt.YouTube, yt.SoundCloud} {
 		if err := msg.failed[src]; err != nil {
 			name := map[yt.Source]string{yt.YouTube: "YouTube", yt.SoundCloud: "SoundCloud"}[src]
-			return m, m.setStatus(fmt.Sprintf("%s search failed: %v (showing the rest)", name, err), true)
+			return m, tea.Batch(m.setStatus(fmt.Sprintf("%s search failed: %v (showing the rest)", name, err), true), m.schedulePreview())
 		}
 	}
-	return m, nil
+	return m, m.schedulePreview()
 }
 
 // handleResultsKey handles keys specific to the results list. handled is
@@ -915,13 +977,13 @@ func (m Model) handleResultsKey(k string) (Model, tea.Cmd, bool) {
 			m.selected++
 		}
 		m.scrollIntoView()
-		return m, nil, true
+		return m, m.schedulePreview(), true
 	case keyUp:
 		if m.selected > 0 {
 			m.selected--
 		}
 		m.scrollIntoView()
-		return m, nil, true
+		return m, m.schedulePreview(), true
 	case keyEnter:
 		if len(m.results) == 0 {
 			return m, nil, true

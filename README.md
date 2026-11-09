@@ -97,7 +97,10 @@ and say where in the track they were left (`@1:23`). Some SoundCloud tracks are 
 status says so); `:radio` works from the YouTube songs of the queue only.
 
 Terminals 108+ columns wide show three equal columns (now playing, queue, search);
-narrower ones get a stacked layout. Under the cover is the waveform of the playing
+narrower ones get a stacked layout. In the wide layout the search column is split once
+there are results: the list above, and below it the cover, numbers and description of the
+selected result, so `j` `k` browse through them (looked up once the selection rests for
+a moment). Under the cover is the waveform of the playing
 song: its loudness over time, mirrored around a middle line, the part already played in
 the accent colour and the playhead in bold (beside the cover in the stacked layout; two
 rows, four on a tall screen, none on a screen too short to leave room for the text

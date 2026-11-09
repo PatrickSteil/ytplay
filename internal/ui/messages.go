@@ -116,6 +116,13 @@ type analysisMsg struct {
 // looked up, so skipping through songs does not start a lookup for each one.
 const statsDelay = 1200 * time.Millisecond
 
+// previewMsg fires previewDelay after the selected search result changed.
+type previewMsg struct{ id string }
+
+// previewDelay is how long a result must stay selected before its cover and
+// description are looked up.
+const previewDelay = 400 * time.Millisecond
+
 // downloadDoneMsg is the result of saving a song to a file.
 type downloadDoneMsg struct {
 	path string

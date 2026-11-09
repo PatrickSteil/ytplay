@@ -27,6 +27,14 @@ const (
 	wideMinHeight = 6
 	// The cover needs the cover rows plus a blank line and three text lines.
 	coverColHeight = coverRows + 4
+
+	// The search column is split in two once there are results: the list above
+	// and a preview of the selected result below. The preview would like a
+	// cover, a blank line, two lines of text, four of description and a frame;
+	// the list keeps at least previewMinTop framed lines.
+	previewWant   = coverRows + 1 + 2 + 4 + 2
+	previewMinTop = 8
+	previewMin    = 6
 )
 
 var (
@@ -345,7 +353,8 @@ func (m Model) statusLine() string {
 // resultsVisible is how many result rows fit on screen.
 func (m Model) resultsVisible() int {
 	if m.wide() {
-		return max(m.colInnerHeight()-2, 0) // search bar + results header
+		top, _ := m.searchSplit()
+		return max(top-2, 0) // search bar + results header
 	}
 	fixed := len(m.renderTop()) + 1 + len(m.renderQueue()) + 2 + len(m.renderBottom())
 	return max(m.height-fixed, 0)
@@ -532,6 +541,65 @@ func (m Model) leftBodyN(innerH int) (body []string, comments int) {
 	return body, comments
 }
 
+// searchSplit divides the search column's inner height into the part for the
+// search bar and results and the part for the preview of the selected result
+// (0 when there is nothing to preview or too little room).
+func (m Model) searchSplit() (top, bottom int) {
+	innerH := m.colInnerHeight()
+	if len(m.results) == 0 {
+		return innerH, 0
+	}
+	outer := min(previewWant, innerH+2-previewMinTop)
+	if outer < previewMin {
+		return innerH, 0
+	}
+	return innerH - outer, outer - 2
+}
+
+// previewBody shows the selected result: cover, title, channel, numbers and
+// as much of the description as fits into h lines.
+func (m Model) previewBody(w, h int) []string {
+	r, ok := m.selectedResult()
+	if !ok {
+		return nil
+	}
+	var body []string
+	if h >= coverRows+3 {
+		pad := strings.Repeat(" ", max((w-coverCols)/2, 0))
+		cover, ok := m.covers[r.ID]
+		if !ok {
+			cover = placeholderCover()
+		}
+		for _, l := range strings.Split(cover, "\n") {
+			body = append(body, pad+l)
+		}
+		body = append(body, "")
+	}
+	meta := formatDur(r.Duration)
+	if ch := safe(r.Channel); ch != "" {
+		meta = ch + " · " + meta
+	}
+	body = append(body, bold.Render(clip(safe(r.Title), w)), dim.Render(clip(meta, w)))
+	if l := m.statsLineFor(r.ID); l != "" && len(body) < h {
+		body = append(body, clip(l, w))
+	}
+	if room := h - len(body) - 1; room >= 1 {
+		st := m.stats[r.ID]
+		switch {
+		case st.hasInfo:
+			if lines := wrapText(st.info.Description, w, room); len(lines) > 0 {
+				body = append(body, "")
+				for _, l := range lines {
+					body = append(body, dim.Render(l))
+				}
+			}
+		case !st.infoFailed && m.deps.Info != nil:
+			body = append(body, "", dim.Render("Loading description…"))
+		}
+	}
+	return body
+}
+
 func (m Model) searchBody(w, innerH int) []string {
 	var bar string
 	if m.mode == modeSearch {
@@ -555,6 +623,7 @@ func (m Model) viewWide() string {
 	innerH := m.colInnerHeight()
 	lw, qw, sw := m.colWidths()
 	m.scrollIntoView()
+	searchH, previewH := m.searchSplit()
 
 	queueBody := m.queueRows(qw - 3)
 	if len(queueBody) == 0 {
@@ -562,7 +631,10 @@ func (m Model) viewWide() string {
 	}
 	left := box(m.theme(), "Now playing", m.leftBody(innerH), lw-2, innerH, false)
 	queue := box(m.theme(), m.queueTitle(), queueBody, qw-2, innerH, m.mode == modeQueue)
-	search := box(m.theme(), "Search", m.searchBody(sw-3, innerH), sw-2, innerH, m.mode == modeSearch || m.mode == modeResults)
+	search := box(m.theme(), "Search", m.searchBody(sw-3, searchH), sw-2, searchH, m.mode == modeSearch || m.mode == modeResults)
+	if previewH > 0 {
+		search = append(search, box(m.theme(), "Preview", m.previewBody(sw-3, previewH), sw-2, previewH, false)...)
+	}
 
 	lines := make([]string, 0, m.height)
 	for i := range left {
@@ -678,8 +750,10 @@ func (m Model) bpmKeyLine() string {
 }
 
 // statsLine is "1.2M views · 8.9K likes · 2013" (empty until known).
-func (m Model) statsLine() string {
-	st := m.stats[m.currentID()]
+func (m Model) statsLine() string { return m.statsLineFor(m.currentID()) }
+
+func (m Model) statsLineFor(id string) string {
+	st := m.stats[id]
 	if !st.hasInfo {
 		return ""
 	}
