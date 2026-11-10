@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/PatrickSteil/ytplay/internal/autodj"
 	"github.com/PatrickSteil/ytplay/internal/yt"
 )
 
@@ -53,7 +54,7 @@ var commands = []command{
 	{name: "clear", short: []string{"X"}, run: cmdClear, usage: ":clear", about: "clear the queue (asks first)"},
 	{name: "auto", short: []string{"a"}, run: cmdAuto, inPopup: true, usage: ":auto", about: "autodj on or off (the next song mixes in early)"},
 	{name: "dj", run: cmdDJ, inPopup: true, usage: ":dj", about: "the DJ popup: the queue with its BPM"},
-	{name: "sort", short: []string{"b"}, run: cmdSort, inPopup: true, usage: ":sort", about: "DJ popup: sort the queue by BPM (again: reverse)"},
+	{name: "sort", short: []string{"b"}, run: cmdSort, inPopup: true, usage: ":sort [build|down]", about: "DJ popup: arrange the queue to flow from the playing song by tempo, key and energy; build or down shapes the energy"},
 	{name: "bpm", short: []string{"e"}, run: cmdBPM, inPopup: true, usage: ":bpm N", about: "DJ popup: set a song's BPM (alone: the detected one)"},
 	{name: "help", short: []string{"h"}, run: cmdHelp, inPopup: true, usage: ":help", about: "this help"},
 	{name: "quit", short: []string{"q"}, run: cmdQuit, inPopup: true, usage: ":quit", about: "quit (Ctrl+C too)"},
@@ -364,9 +365,20 @@ func needPopup(m Model) (Model, tea.Cmd, bool) {
 	return m, status, true
 }
 
-func cmdSort(m Model, _ string) (Model, tea.Cmd) {
+func cmdSort(m Model, arg string) (Model, tea.Cmd) {
 	if next, cmd, refused := needPopup(m); refused {
 		return next, cmd
+	}
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "", "flow":
+		m.sortArc = autodj.Flow
+	case "build", "up":
+		m.sortArc = autodj.Build
+	case "down", "wind", "winddown":
+		m.sortArc = autodj.WindDown
+	default:
+		status := m.setStatus("Sort takes build, down or flow (or nothing)", true)
+		return m, status
 	}
 	return m.sortQueueByBPM()
 }

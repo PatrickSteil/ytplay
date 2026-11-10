@@ -190,10 +190,11 @@ type Model struct {
 
 	// Queue editing. queueCursor indexes the entries after the current one.
 	queueCursor int
-	queueOff    int  // first visible queue row
-	queueReturn mode // where Esc / Tab goes back to
-	queueBusy   bool // an edit command is in flight
-	sorted      bool // the queue was sorted by BPM and not edited by hand since: radio songs are sorted in
+	queueOff    int        // first visible queue row
+	queueReturn mode       // where Esc / Tab goes back to
+	queueBusy   bool       // an edit command is in flight
+	sortArc     autodj.Arc // the shape of energy :sort arranges for
+	sorted      bool       // the queue was sorted by BPM and not edited by hand since: radio songs are sorted in
 	// resortIDs are the songs a radio added that are waited for (to be in the
 	// queue and analysed) before the queue is sorted again.
 	resortIDs   map[string]bool
@@ -1575,7 +1576,7 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	trackOf := func(id string) autodj.Track {
 		t := autodj.Track{BPM: m.tempoOf(id)}
 		if st := m.stats[id]; st.hasRes {
-			t.Camelot = st.res.Camelot
+			t.Camelot, t.Energy = st.res.Camelot, st.res.Energy
 		}
 		return t
 	}
@@ -1598,11 +1599,11 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	type item struct{ idx int }
 	var order []item
 	if free {
-		for _, k := range autodj.Arrange(tracks, -1, append([]int{0}, rest...)) {
+		for _, k := range autodj.Arrange(tracks, -1, append([]int{0}, rest...), m.sortArc) {
 			order = append(order, item{k}) // relative to the playing song
 		}
 	} else {
-		for _, k := range autodj.Arrange(tracks, 0, rest) {
+		for _, k := range autodj.Arrange(tracks, 0, rest, m.sortArc) {
 			order = append(order, item{k - 1})
 		}
 	}
@@ -1631,6 +1632,12 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	status := "Queue arranged to flow from the playing song"
 	if free {
 		status = "Queue arranged from the best opener"
+	}
+	switch m.sortArc {
+	case autodj.Build:
+		status += ", building up in energy"
+	case autodj.WindDown:
+		status += ", winding down in energy"
 	}
 	var notes []string
 	if pending > 0 {

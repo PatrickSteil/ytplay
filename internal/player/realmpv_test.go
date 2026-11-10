@@ -241,6 +241,12 @@ func beatMatchRealMpv(t *testing.T, c realCase) {
 		}
 		songs[paths[name]] = autodj.Song{Length: float64(len(x)) / analyze.SampleRate, Edges: res.Edges}
 	}
+	{ // how far the analysis is from the kicks the tracks really have
+		ea, eb := songs[paths["a"]].Edges, songs[paths["b"]].Edges
+		lastA := beatsA[len(beatsA)-1]
+		t.Logf("analysis: a's end anchor %.1f ms off the last kick (period %.4f, true %.4f), b's start anchor %.1f ms off the first (period %.4f, true %.4f)",
+			(ea.End.Anchor-lastA)*1000, ea.End.Period, 60/bpmA, (eb.Start.Anchor-firstB)*1000, eb.Start.Period, 60/bpmB)
+	}
 	plan := autodj.For(songs[paths["a"]], songs[paths["b"]])
 	if plan.Kind != autodj.BeatMatch {
 		t.Fatalf("plan = %+v (%s), want a beat-match", plan, plan.Why)

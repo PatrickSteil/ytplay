@@ -15,6 +15,40 @@ import (
 type Track struct {
 	BPM     float64 // 0 if unknown
 	Camelot string  // e.g. "11A", "" if unknown
+	Energy  float64 // 0 (calm) to 1 (full on), 0 if unknown
+}
+
+// Arc is the shape the energy of a queue should take.
+type Arc int
+
+const (
+	Flow     Arc = iota // no shape: just keep the energy steady from song to song
+	Build               // rising: an energy drop is expensive, a rise is cheap
+	WindDown            // falling: the other way round
+)
+
+// What a change of energy of the whole range (0 to 1) costs, in percent of
+// tempo: a gap of 0.3 is worth 3.6 percent. In an arc the way against it costs
+// more than three times as much, the way with it a third.
+const (
+	energyWeight  = 12.0
+	againstFactor = 3.5
+	withFactor    = 0.3
+)
+
+// energyCost is the price of going from the energy of a to that of b.
+func energyCost(a, b Track, arc Arc) float64 {
+	if a.Energy <= 0 || b.Energy <= 0 {
+		return 0
+	}
+	d := b.Energy - a.Energy // positive: the energy rises
+	switch {
+	case arc == Build && d > 0, arc == WindDown && d < 0:
+		return energyWeight * withFactor * math.Abs(d)
+	case arc != Flow:
+		return energyWeight * againstFactor * math.Abs(d)
+	}
+	return energyWeight * math.Abs(d)
 }
 
 // Costs are in "percent of tempo": a transition between songs 1% apart in tempo
@@ -87,34 +121,52 @@ func keyCost(a, b string) float64 {
 // plus a penalty for clashing keys. The beat-match limit (MaxTempoGap, 6%) is
 // where a smooth transition stops being possible, so beyond it every further
 // percent costs double: a fast climb is worse than a few small steps.
-func Cost(a, b Track) float64 {
+func Cost(a, b Track, arc Arc) float64 {
 	if a.BPM <= 0 || b.BPM <= 0 {
-		return UnknownCost
+		return UnknownCost + energyCost(a, b, arc)
 	}
 	gap := tempoGap(a.BPM, b.BPM)
 	limit := MaxTempoGap * 100
 	cost := math.Min(gap, limit) + 2*math.Max(gap-limit, 0)
-	return cost + keyCost(a.Camelot, b.Camelot)
+	return cost + keyCost(a.Camelot, b.Camelot) + energyCost(a, b, arc)
 }
 
 // pathCost is the total price of playing tracks in order, after first if
 // first >= 0 (an index into tracks that is not part of order).
-func pathCost(tracks []Track, first int, order []int) float64 {
+func pathCost(tracks []Track, first int, order []int, arc Arc) float64 {
 	total, prev := 0.0, first
-	for _, i := range order {
+	for k, i := range order {
 		if prev >= 0 {
-			total += Cost(tracks[prev], tracks[i])
+			total += Cost(tracks[prev], tracks[i], arc)
 		}
 		prev = i
+		total += arcCost(tracks[i].Energy, (float64(k)+0.5)/float64(len(order))-0.5, arc)
 	}
 	return total
+}
+
+// arcWeight is how much an arc pulls energy to the end it belongs at.
+const arcWeight = 15.0
+
+// arcCost rewards the energy of a song for sitting at the right end of the
+// queue (pos from -0.5, the first, to 0.5, the last): late for Build, early for
+// WindDown. The step costs of Cost only say that a drop is bad; without this
+// every order that climbs by the same total costs the same, whatever the shape.
+func arcCost(energy, pos float64, arc Arc) float64 {
+	switch arc {
+	case Build:
+		return -arcWeight * pos * energy
+	case WindDown:
+		return arcWeight * pos * energy
+	}
+	return 0
 }
 
 // Arrange orders the songs rest (indexes into tracks) to follow the song first
 // (an index, or -1 for none: then the best opener is chosen too) as cheaply as
 // it can find. Songs without a known tempo keep their order at the end. The
 // result is deterministic.
-func Arrange(tracks []Track, first int, rest []int) []int {
+func Arrange(tracks []Track, first int, rest []int, arc Arc) []int {
 	var known, unknown []int
 	for _, i := range rest {
 		if tracks[i].BPM > 0 {
@@ -131,9 +183,9 @@ func Arrange(tracks []Track, first int, rest []int) []int {
 	var best []int
 	bestCost := math.Inf(1)
 	try := func(start int) {
-		order := nearest(tracks, first, start, known)
-		order = improve(tracks, first, order)
-		c := pathCost(tracks, first, order)
+		order := nearest(tracks, first, start, known, arc)
+		order = improve(tracks, first, order, arc)
+		c := pathCost(tracks, first, order, arc)
 		if c < bestCost-1e-9 {
 			best, bestCost = order, c
 		}
@@ -162,7 +214,7 @@ func sortedByTempo(tracks []Track, ids []int) []int {
 
 // nearest builds an order greedily: each step takes the cheapest song to follow
 // the last one. start >= 0 forces the first song of the order.
-func nearest(tracks []Track, first, start int, ids []int) []int {
+func nearest(tracks []Track, first, start int, ids []int, arc Arc) []int {
 	left := append([]int(nil), ids...)
 	var order []int
 	prev := first
@@ -184,7 +236,7 @@ func nearest(tracks []Track, first, start int, ids []int) []int {
 		for k, i := range left {
 			c := 0.0
 			if prev >= 0 {
-				c = Cost(tracks[prev], tracks[i])
+				c = Cost(tracks[prev], tracks[i], arc)
 			} else {
 				c = tracks[i].BPM / 1e6 // no one to follow: the slowest
 			}
@@ -201,14 +253,14 @@ func nearest(tracks []Track, first, start int, ids []int) []int {
 // until no such change helps. The first song is only moved when first < 0 and
 // start was not forced (see Arrange: it is kept here, the opener is chosen by
 // trying them all).
-func improve(tracks []Track, first int, order []int) []int {
+func improve(tracks []Track, first int, order []int, arc Arc) []int {
 	order = append([]int(nil), order...)
 	n := len(order)
 	lo := 0
 	if first < 0 {
 		lo = 1 // the opener was chosen by the caller
 	}
-	cur := pathCost(tracks, first, order)
+	cur := pathCost(tracks, first, order, arc)
 	for improved := true; improved; {
 		improved = false
 		// move song i to position j
@@ -221,7 +273,7 @@ func improve(tracks []Track, first int, order []int) []int {
 				v := cand[i]
 				cand = append(cand[:i], cand[i+1:]...)
 				cand = append(cand[:j], append([]int{v}, cand[j:]...)...)
-				if c := pathCost(tracks, first, cand); c < cur-1e-9 {
+				if c := pathCost(tracks, first, cand, arc); c < cur-1e-9 {
 					order, cur, improved = cand, c, true
 				}
 			}
@@ -233,7 +285,7 @@ func improve(tracks []Track, first int, order []int) []int {
 				for a, b := i, j; a < b; a, b = a+1, b-1 {
 					cand[a], cand[b] = cand[b], cand[a]
 				}
-				if c := pathCost(tracks, first, cand); c < cur-1e-9 {
+				if c := pathCost(tracks, first, cand, arc); c < cur-1e-9 {
 					order, cur, improved = cand, c, true
 				}
 			}

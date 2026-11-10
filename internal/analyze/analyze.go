@@ -46,6 +46,8 @@ type Result struct {
 	// could not be measured), Peak its largest sample (1 is full scale). The
 	// autodj evens out the loudness of two songs by it.
 	Loudness, Peak float64
+	// Energy is how intense the song feels, 0..1 (0 if unknown): see energyOf.
+	Energy float64
 }
 
 // Level is how much of an analysis is wanted.
@@ -88,6 +90,7 @@ func AnalyzeWith(pcm []float32, o Options) (Result, error) {
 		res.Loudness = lufs
 	}
 	res.Peak = peakOf(pcm)
+	res.Energy = energyOf(res.Loudness, res.Wave)
 	// The key does not depend on the tempo: with a pool it is worked out beside it.
 	var key string
 	var keyScore float64

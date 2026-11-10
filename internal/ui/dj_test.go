@@ -619,3 +619,40 @@ func TestSortOfASongThatHasNotStartedArrangesTheWholeQueue(t *testing.T) {
 }
 
 func urlOf(id string) string { return "https://www.youtube.com/watch?v=" + id }
+
+// withEnergy sets the energy of songs whose BPM was set with withBPM.
+func withEnergy(m Model, energies map[string]float64) Model {
+	for id, e := range energies {
+		st := m.stats[id]
+		st.res.Energy = e
+		m.stats[id] = st
+	}
+	return m
+}
+
+func TestSortBuildPutsRisingEnergyFirstAndDownTheOtherWay(t *testing.T) {
+	bpms := map[string]float64{"e0": 125, "e1": 125, "e2": 125, "e3": 125, "e4": 125}
+	for _, arg := range []string{"build", "down"} {
+		m := withEnergy(djModel(t, 5, bpms), map[string]float64{"e0": 0.5, "e1": 0.7, "e2": 0.6, "e3": 0.55, "e4": 0.9})
+		m.elapsed = 60
+		m = editCommand(m, "sort "+arg)
+		got := reorderCall(m)
+		if arg == "build" && got != "e3,e2,e1,e4" {
+			t.Errorf("sort build = %q, want energy rising: e3,e2,e1,e4", got)
+		}
+		if arg == "down" {
+			ids := strings.Split(got, ",")
+			if ids[len(ids)-1] == "e4" {
+				t.Errorf("sort down = %q ends on the most energetic song", got)
+			}
+		}
+	}
+}
+
+func TestSortRefusesAnUnknownShape(t *testing.T) {
+	m := djModel(t, 3, map[string]float64{"e1": 120, "e2": 130})
+	m, _ = typeCommand(m, "sort sideways")
+	if got := reorderCall(m); got != "" {
+		t.Errorf("an unknown shape reordered the queue: %q", got)
+	}
+}
