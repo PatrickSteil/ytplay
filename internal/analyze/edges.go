@@ -386,9 +386,13 @@ func edgeGrid(pcm []float32, bpm, from, to float64, atStart, scan bool, pool *Po
 	if fit.period == 0 {
 		return unsure, false
 	}
-	k := math.Round((edge - fit.phase) / fit.period)
+	phase := fit.phase
+	if kp, sharp, ok := kickPhase(pcm[int((from+lo)*SampleRate):int((from+hi)*SampleRate)], fit.period); ok && sharp >= kickMinSharp {
+		phase = lo + kp // the grid's own phase may sit on a clap or a bass note
+	}
+	k := math.Round((edge - phase) / fit.period)
 	return BeatGrid{
-		Period: fit.period, Anchor: from + fit.phase + k*fit.period, Sure: sureGrid(fit, bpm),
+		Period: fit.period, Anchor: from + phase + k*fit.period, Sure: sureGrid(fit, bpm),
 		Sharp: fit.sharp, Wobble: fit.wobble, Margin: fit.margin,
 	}, true
 }
