@@ -198,19 +198,24 @@ func TestSortPutsUnknownBPMLastInTheirOldOrder(t *testing.T) {
 	}
 }
 
-func TestSecondSortPressReverses(t *testing.T) {
+func TestSecondSortPressChangesNothing(t *testing.T) {
 	m := djModel(t, 5, map[string]float64{"e1": 140, "e2": 90, "e4": 100}) // e3 unknown
 	m = editCommand(m, "sort")
-	if got := reorderCall(m); got != "e2,e4,e1,e3" {
-		t.Fatalf("first press: %q, want e2,e4,e1,e3", got)
-	}
+	first := reorderCall(m)
 	m = editCommand(m, "sort")
-	if got := reorderCall(m); got != "e1,e4,e2,e3" {
-		t.Errorf("second press: %q, want fastest first with the unknown last: e1,e4,e2,e3", got)
+	if got := reorderCall(m); got != first {
+		t.Errorf("second press: %q, want the same arrangement as the first: %q", got, first)
 	}
+}
+
+func TestSortFlowsFromThePlayingSongInsteadOfStartingAtTheSlowest(t *testing.T) {
+	// 155 plays; the slowest (138) must not come first, nor the fastest (160) last.
+	m := djModel(t, 5, map[string]float64{"e0": 155, "e1": 138, "e2": 150, "e3": 160, "e4": 145})
+	m.elapsed = 60 // well into the song: it stays where it is
 	m = editCommand(m, "sort")
-	if got := reorderCall(m); got != "e2,e4,e1,e3" {
-		t.Errorf("third press: %q, want slowest first again", got)
+	got := reorderCall(m)
+	if first := strings.Split(got, ",")[0]; first != "e2" && first != "e3" {
+		t.Errorf("reorder = %q: the song after the 155 BPM one should be 150 or 160", got)
 	}
 }
 
@@ -361,7 +366,7 @@ func TestSortUsesTheBPMSetByHand(t *testing.T) {
 	}
 }
 
-func TestSettingABPMRestartsTheSortDirection(t *testing.T) {
+func TestSettingABPMIsUsedByTheNextSort(t *testing.T) {
 	m := djModel(t, 4, map[string]float64{"e1": 140, "e2": 90, "e3": 100})
 	m = editCommand(m, "sort")      // slowest first: e2, e3, e1 (the selection follows e1); the next press would reverse
 	m, _ = typeCommand(m, "bpm 95") // e1 is now 95
@@ -422,7 +427,7 @@ func TestSortKeepsTheSelectionOnASongThatMovesUp(t *testing.T) {
 	}
 }
 
-func TestMovingSongsByHandRestartsTheSortDirection(t *testing.T) {
+func TestMovingSongsByHandIsRearrangedBySortAgain(t *testing.T) {
 	m := djModel(t, 4, map[string]float64{"e1": 140, "e2": 90, "e3": 100})
 	m = editCommand(m, "sort") // slowest first; the next press would reverse
 	m, _ = send(m, "esc", "tab")
@@ -598,3 +603,19 @@ func TestPopupListsTheAutoDJCommand(t *testing.T) {
 		t.Errorf("the help popup should mention autodj:\n%s", out)
 	}
 }
+
+func TestSortOfASongThatHasNotStartedArrangesTheWholeQueue(t *testing.T) {
+	// 155 has hardly begun: the best opener is the slowest, and it plays now.
+	m := djModel(t, 4, map[string]float64{"e0": 155, "e1": 150, "e2": 145, "e3": 140})
+	m.elapsed = 0.5
+	m = editCommand(m, "sort")
+	calls := strings.Join(actionsOf(m).calls, "\n")
+	if !strings.Contains(calls, "arrange "+urlOf("e3")+","+urlOf("e2")+","+urlOf("e1")+","+urlOf("e0")) {
+		t.Errorf("calls:\n%s\nwant the whole queue arranged from 140 up", calls)
+	}
+	if got := queueIDs(m); got != "e3,e2,e1,e0" {
+		t.Errorf("playlist = %q", got)
+	}
+}
+
+func urlOf(id string) string { return "https://www.youtube.com/watch?v=" + id }

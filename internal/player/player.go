@@ -500,6 +500,25 @@ func (p *Player) ReorderUpcoming(ctx context.Context, urls []string) error {
 	return nil
 }
 
+// ArrangeFromCurrent puts the playing song and the ones after it in the given
+// order, for a song that has only just started: if the first is another song,
+// that one plays now, from its start. urls must be exactly those songs.
+func (p *Player) ArrangeFromCurrent(ctx context.Context, urls []string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	changed, err := p.q.reorderFromCurrent(urls)
+	if err != nil {
+		return err
+	}
+	if changed {
+		p.playFrom(ctx, p.q.pos)
+		return nil
+	}
+	p.syncPreload(ctx)
+	p.emitState()
+	return nil
+}
+
 // ClearQueue removes every entry except the one that plays now.
 func (p *Player) ClearQueue(ctx context.Context) error {
 	p.mu.Lock()

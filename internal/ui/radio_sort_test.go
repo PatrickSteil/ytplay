@@ -78,11 +78,11 @@ func TestRadioSongsAreSortedInWhenTheQueueWasSortedAndAutoDJIsOn(t *testing.T) {
 	if got := lastReorder(m); got != "r1,u0,r0,u1" {
 		t.Errorf("after the radio the queue is %q, want r1,u0,r0,u1 (slowest first, as before)", got)
 	}
-	// the next :sort goes the other way, as it would have without the radio
+	// sorting again changes nothing
 	m = editCommand(m, "dj")
 	m = editCommand(m, "sort")
-	if got := lastReorder(m); got != "u1,r0,u0,r1" {
-		t.Errorf("the next sort gave %q, want fastest first", got)
+	if got := lastReorder(m); got != "r1,u0,r0,u1" {
+		t.Errorf("the next sort gave %q, want the same arrangement", got)
 	}
 }
 

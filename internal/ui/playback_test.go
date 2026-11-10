@@ -64,6 +64,10 @@ func (f *fakeActions) ReorderUpcoming(ctx context.Context, urls []string) error 
 	return f.rec("reorder " + strings.Join(urls, ","))
 }
 
+func (f *fakeActions) ArrangeFromCurrent(ctx context.Context, urls []string) error {
+	return f.rec("arrange " + strings.Join(urls, ","))
+}
+
 func actionsOf(m Model) *fakeActions { return m.deps.Player.(*fakeActions) }
 
 // run executes a cmd, expanding batches, and feeds the resulting messages back

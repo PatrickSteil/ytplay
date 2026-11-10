@@ -655,3 +655,31 @@ func (d *fakeDeck) timeOf(call string) (time.Time, bool) {
 	}
 	return time.Time{}, false
 }
+
+func TestArrangeFromCurrentPlaysANewOpener(t *testing.T) {
+	p, a := newTestPlayer(t)
+	_ = p.QueueMany(bg, []string{"a", "b", "c"})
+	a.take()
+	drain(p)
+	if err := p.ArrangeFromCurrent(bg, []string{"c", "a", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if calls := a.take(); !has(calls, "loadfile c replace") {
+		t.Errorf("c should play now: %q", calls)
+	}
+	if err := p.ArrangeFromCurrent(bg, []string{"c", "x", "b"}); err == nil {
+		t.Error("a different set of songs must be refused")
+	}
+}
+
+func TestArrangeFromCurrentWithTheSameOpenerOnlyReorders(t *testing.T) {
+	p, a := newTestPlayer(t)
+	_ = p.QueueMany(bg, []string{"a", "b", "c"})
+	a.take()
+	drain(p)
+	if err := p.ArrangeFromCurrent(bg, []string{"a", "c", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	eq(t, "commands", a.take(), nil)
+	eq(t, "events", drain(p), state("a*,c,b", 0))
+}

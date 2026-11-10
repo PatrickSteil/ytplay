@@ -110,3 +110,28 @@ func (q *queue) reorderUpcoming(urls []string) error {
 	copy(have, urls)
 	return nil
 }
+
+// reorderFromCurrent puts the playing entry and the ones after it in the given
+// order; urls must hold exactly those URLs, duplicates counted. It reports
+// whether the playing entry is now a different song.
+func (q *queue) reorderFromCurrent(urls []string) (changed bool, err error) {
+	if q.pos < 0 {
+		return false, errors.New("nothing is playing")
+	}
+	have := q.urls[q.pos:]
+	if len(urls) != len(have) {
+		return false, fmt.Errorf("got %d songs to arrange, %d are playing or upcoming", len(urls), len(have))
+	}
+	left := map[string]int{}
+	for _, u := range have {
+		left[u]++
+	}
+	for _, u := range urls {
+		if left[u]--; left[u] < 0 {
+			return false, fmt.Errorf("%q is not queued (or listed too often)", u)
+		}
+	}
+	changed = urls[0] != have[0]
+	copy(have, urls)
+	return changed, nil
+}

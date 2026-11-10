@@ -65,7 +65,7 @@ the queue after Tab.
 | `:download` | `:d` | save the highlighted result or queue entry (the playing song if nothing is highlighted) to a file; a popup asks for the path, Tab completes it (needs ffmpeg) |
 | `:auto` | `:a` | switch autodj on or off (off at start): the next song then starts under the last 4 bars of the playing one (inside its last 30 s, where its beat is playing) and comes in where its own beat starts, even a minute or more into the song, beat-matched (its tempo adjusted by up to 6%; a song at twice or half the tempo, like 70 into 140 BPM, is matched in double or half time, every beat of the slower one meeting a beat of the faster one, with no big speed change) when both songs have a beat the analysis is sure of, otherwise a plain 6 s crossfade; the DJ popup says which it will be. Until you use `:auto` or `:dj` only the playing song is analysed, lightly (tempo and key, one core); after that it is analysed completely and the whole queue in parallel (up to four songs at once, on up to half the cores) |
 | `:dj` | | DJ popup: the playing song and the queue with their BPM and key (coloured by position on the Camelot wheel, so mixable keys look alike); `j` `k` select, Esc or `:dj` closes. The command line opens over it, and these run inside it: `:sort`, `:bpm`, `:auto`, `:shuffle`, `:undo`, `:vol`, `:mute`, `:help` and `:quit` |
-| `:sort` | `:b` | in the DJ popup: sort the queue by BPM (slowest first, again: fastest first) |
+| `:sort` | `:b` | in the DJ popup: arrange the queue so each song follows the one before it smoothly, by tempo (double and half time count as equal) and key: the playing song stays, the rest drift from it instead of starting at the slowest. If the playing song has only just started (under 3 s) it is arranged too, and the best opener plays. Songs without a BPM go last |
 | `:bpm N` | `:e` | in the DJ popup: set the highlighted song's BPM by hand (`*`; kept until ytplay quits); `:bpm` alone goes back to the detected one |
 | `:radio N` | `:r` | add up to N songs similar to the queue (1 to 50, default 10) |
 | `:comments` | `:c` | the comments of the playing song, as many below each other as fit in the wide layout; when all fetched ones are in view it loads 20 more from YouTube (up to 100) and adds them below (scrolling to them if they are out of view), otherwise it pages on; after the last one it starts again at the first |
@@ -87,7 +87,7 @@ is skipped from the first moment, while the very first song only gets its end tr
 songs of which only part was analysed (very long tracks) are trimmed where the analysis knows.
 
 The playing song's key (in the line under its title) and its row in the queue are drawn in the colour of its Camelot key.
-While `:auto` is on and the queue was sorted with `:sort`, songs added by `:radio` are sorted in as soon as they have been analysed (in the direction of the last sort), so `:sort` does not need to be pressed twice.
+While `:auto` is on and the queue was sorted with `:sort`, songs added by `:radio` are sorted in as soon as they have been analysed (arranged again), so `:sort` does not need to be pressed twice.
 
 A search looks at YouTube and SoundCloud at the same time (10 results each: YouTube's first, SoundCloud's below), and a
 coloured dot in front of every song says where it is from: red for YouTube, orange for SoundCloud (also in the queue and

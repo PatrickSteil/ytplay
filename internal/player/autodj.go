@@ -418,15 +418,8 @@ func (p *Player) beginOverlap(ctx context.Context, tr *transition, pos float64, 
 		tr.plannedAt = time.Since(p.epoch).Seconds() - (pos - tr.plan.AStart)
 	}
 	if speed := tr.plan.PlayingSpeed(); speed != 1 {
-		now := time.Since(p.epoch).Seconds()
 		if _, err := p.decks[p.active].Command(ctx, "set_property", "speed", speed); err == nil {
 			p.speed[p.active] = speed
-			// The playing song speeds up a little before it reaches AStart (the
-			// next song is ordered ahead of its start), so it gets there earlier
-			// than it would have at normal speed.
-			if lead := tr.plannedAt - now; !late && lead > 0 {
-				tr.plannedAt = now + lead/speed
-			}
 		}
 	}
 }

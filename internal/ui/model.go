@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +60,9 @@ type Actions interface {
 	// ReorderUpcoming puts the songs after the playing one in the given
 	// order; urls must be exactly the upcoming songs.
 	ReorderUpcoming(ctx context.Context, urls []string) error
+	// ArrangeFromCurrent orders the playing song and the upcoming ones; if
+	// another song comes first it plays now.
+	ArrangeFromCurrent(ctx context.Context, urls []string) error
 	// SetUpcoming replaces the songs after the playing one, to bring back an
 	// older queue (undo).
 	SetUpcoming(ctx context.Context, urls []string) error
@@ -191,7 +193,6 @@ type Model struct {
 	queueOff    int  // first visible queue row
 	queueReturn mode // where Esc / Tab goes back to
 	queueBusy   bool // an edit command is in flight
-	sortDesc    bool // the next sort by BPM puts the fastest first
 	sorted      bool // the queue was sorted by BPM and not edited by hand since: radio songs are sorted in
 	// resortIDs are the songs a radio added that are waited for (to be in the
 	// queue and analysed) before the queue is sorted again.
@@ -1203,8 +1204,8 @@ func (m Model) handleQueueKey(k string) (Model, tea.Cmd, bool) {
 	} else {
 		m.rememberQueue("move")
 	}
-	m.sortDesc, m.sorted = false, false // a hand edit starts the next sort from the slowest again
-	idx := m.pos + 1 + m.queueCursor    // mpv playlist index of the selection
+	m.sorted = false
+	idx := m.pos + 1 + m.queueCursor // mpv playlist index of the selection
 	p := m.deps.Player
 	pl := append([]playlistEntry(nil), m.playlist...) // never mutate the shared slice
 	var f func(ctx context.Context) error
@@ -1287,7 +1288,7 @@ func (m Model) undoQueue() (Model, tea.Cmd) {
 	e := m.undo[n-1]
 	m.undo = slices.Clone(m.undo[:n-1])
 	m.playlist = append(slices.Clone(m.playlist[:m.pos+1]), e.entries...)
-	m.sortDesc, m.sorted = false, false // the next sort starts from the slowest again
+	m.sorted = false
 	m.clampQueue()
 	m.clampDJ()
 	m.queueBusy = true
@@ -1526,7 +1527,7 @@ func (m Model) setBPM(text string) (next Model, status, warn string) {
 		m.bpmSet[id] = v
 		status = fmt.Sprintf("Set BPM of %s to %s", safe(title), strconv.FormatFloat(v, 'f', -1, 64))
 	}
-	m.sortDesc, m.sorted = false, false // the next sort starts from the slowest again
+	m.sorted = false
 	return m, status, ""
 }
 
@@ -1552,68 +1553,84 @@ func (m Model) maybeResort() (Model, tea.Cmd) {
 		}
 	}
 	m.resortIDs = nil
-	m.sortDesc = !m.sortDesc // sorting flips it: this keeps the direction of the next :sort
 	return m.sortQueueByBPM()
 }
 
-// sortQueueByBPM orders the upcoming songs by tempo, slowest (chillest) first;
-// pressed again, fastest first. Songs without a known BPM go last in their old
-// order. The playing song never moves and the selection stays on its song. Like
-// the other queue edits it updates the list at once and lets the player's
-// events confirm it.
+// sortQueueByBPM arranges the upcoming songs so that each follows the one
+// before it smoothly (see autodj.Arrange): the playing song is fixed, and the
+// songs after it drift in tempo and key from it instead of jumping to the
+// slowest or the fastest. Songs without a known BPM go last in their old
+// order. The selection stays on its song. Like the other queue edits it
+// updates the list at once and lets the player's events confirm it.
 func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	up := m.upcoming()
 	if m.queueBusy || len(up) < 2 {
 		return m, nil
 	}
 	m.rememberQueue("sort")
-	type item struct {
-		idx int
-		bpm float64
-	}
-	var known, unknown []item
+	// tracks[0] is the playing song, tracks[1+i] the i-th upcoming one
+	tracks := make([]autodj.Track, 1+len(up))
+	rest := make([]int, len(up))
 	pending, noBPM := 0, 0
+	trackOf := func(id string) autodj.Track {
+		t := autodj.Track{BPM: m.tempoOf(id)}
+		if st := m.stats[id]; st.hasRes {
+			t.Camelot = st.res.Camelot
+		}
+		return t
+	}
+	tracks[0] = trackOf(yt.KeyOf(m.currentEntry().Filename))
 	for i, e := range up {
 		id := yt.KeyOf(e.Filename)
 		st := m.stats[id]
-		switch bpm := m.tempoOf(id); {
-		case bpm > 0:
-			known = append(known, item{i, bpm})
+		tracks[1+i], rest[i] = trackOf(id), 1+i
+		switch {
+		case tracks[1+i].BPM > 0:
 		case !st.hasRes && !st.analysisFailed && m.deps.Analyze != nil:
 			pending++
-			unknown = append(unknown, item{idx: i})
 		default:
 			noBPM++
-			unknown = append(unknown, item{idx: i})
 		}
 	}
-	desc := m.sortDesc
-	sort.SliceStable(known, func(a, b int) bool {
-		if desc {
-			return known[a].bpm > known[b].bpm
+	// A song that has hardly started is not worth keeping: the whole queue is
+	// arranged, the playing song included, and the best opener plays.
+	free := m.elapsed < freshSeconds && tracks[0].BPM > 0
+	type item struct{ idx int }
+	var order []item
+	if free {
+		for _, k := range autodj.Arrange(tracks, -1, append([]int{0}, rest...)) {
+			order = append(order, item{k}) // relative to the playing song
 		}
-		return known[a].bpm < known[b].bpm
-	})
-	order := append(known, unknown...)
+	} else {
+		for _, k := range autodj.Arrange(tracks, 0, rest) {
+			order = append(order, item{k - 1})
+		}
+	}
 
 	pl := append([]playlistEntry(nil), m.playlist...) // never mutate the shared slice
-	base := m.pos + 1
+	base, shift := m.pos+1, 1                         // shift: the row of the popup is one more than the upcoming index
+	if free {
+		base, shift = m.pos, 0
+	}
 	urls := make([]string, len(order))
 	cursor := m.djCursor
 	for k, it := range order {
 		pl[base+k] = m.playlist[base+it.idx]
 		urls[k] = pl[base+k].Filename
-		if m.djCursor >= 1 && it.idx == m.djCursor-1 {
-			cursor = k + 1 // the selection stays on the same song
+		if m.djCursor >= 1 && it.idx == m.djCursor-shift {
+			cursor = k + shift // the selection stays on the same song
 		}
 	}
-	m.playlist, m.djCursor, m.sortDesc, m.sorted = pl, cursor, !desc, true
+	if free && urls[0] != m.playlist[m.pos].Filename {
+		m.elapsed = 0 // another song starts
+	}
+	m.playlist, m.djCursor, m.sorted = pl, cursor, true
 	m.scrollDJ()
 	m.queueBusy = true
 
-	status := "Sorted by BPM, slowest first"
-	if desc {
-		status = "Sorted by BPM, fastest first"
+	status := "Queue arranged to flow from the playing song"
+	if free {
+		status = "Queue arranged from the best opener"
 	}
 	var notes []string
 	if pending > 0 {
@@ -1629,6 +1646,9 @@ func (m Model) sortQueueByBPM() (Model, tea.Cmd) {
 	return m, tea.Batch(func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 		defer cancel()
+		if free {
+			return queueEditDoneMsg{err: p.ArrangeFromCurrent(ctx, urls)}
+		}
 		return queueEditDoneMsg{err: p.ReorderUpcoming(ctx, urls)}
 	}, m.setStatus(status, false))
 }
@@ -1808,3 +1828,7 @@ func (m Model) handleDownloadKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.dlInput, cmd = m.dlInput.Update(msg)
 	return m, cmd
 }
+
+// freshSeconds is how far into a song it has been playing for it to still count
+// as not started: the queue is arranged around it only after that.
+const freshSeconds = 3.0
