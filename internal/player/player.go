@@ -67,6 +67,7 @@ type Player struct {
 	trans        *transition
 	epoch        time.Time  // the time positions are counted from when timing a start
 	speed        [2]float64 // the speed each deck was last set to
+	gain         [2]float64 // the gain (dB, mpv's volume-gain) each deck was last set to: autodj evens out the loudness of songs with it
 	ease         *easing    // the speed of deck easeDeck is returning to 1
 	easeDeck     int
 
@@ -233,7 +234,7 @@ func (p *Player) playFrom(ctx context.Context, i int) {
 	for ; i < len(p.q.urls); i++ {
 		p.q.pos, p.entryID = i, 0
 		p.emitState() // first, so the UI knows which song a failure is about
-		p.resetSpeed(ctx, p.active)
+		p.resetDeck(ctx, p.active)
 		id, err := load(ctx, p.decks[p.active], p.q.urls[i])
 		if err == nil {
 			p.entryID = id

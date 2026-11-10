@@ -42,6 +42,10 @@ type Result struct {
 	Level Level
 	// Wave is the loudness over the analysed audio, for drawing.
 	Wave Wave
+	// Loudness is the integrated loudness of the analysed audio in LUFS (0 if it
+	// could not be measured), Peak its largest sample (1 is full scale). The
+	// autodj evens out the loudness of two songs by it.
+	Loudness, Peak float64
 }
 
 // Level is how much of an analysis is wanted.
@@ -80,6 +84,10 @@ func AnalyzeWith(pcm []float32, o Options) (Result, error) {
 		return Result{}, errors.New("audio is silent")
 	}
 	res := Result{Level: o.Level, Wave: waveOf(pcm, 0)}
+	if lufs, ok := loudness(pcm); ok {
+		res.Loudness = lufs
+	}
+	res.Peak = peakOf(pcm)
 	// The key does not depend on the tempo: with a pool it is worked out beside it.
 	var key string
 	var keyScore float64

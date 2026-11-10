@@ -36,6 +36,9 @@ const (
 type Song struct {
 	Length float64 // seconds
 	Edges  analyze.Edges
+	// Loudness (LUFS, 0 if unknown) and Peak (largest sample, 1 is full scale)
+	// say how loud the song is, for MatchGain.
+	Loudness, Peak float64
 }
 
 // Kind is the sort of transition.
@@ -59,13 +62,34 @@ type Plan struct {
 	// AStart is the position in the playing song at which the next one starts
 	// to sound, BFrom the position in the next song it starts from.
 	AStart, BFrom float64
-	// Overlap is how long both sound, BSpeed the speed of the next song during
-	// that time (1 for a crossfade) and EaseBack how long it then takes to
-	// return to speed 1 (0 for none).
-	Overlap, BSpeed, EaseBack float64
+	// Overlap is how long both sound (in seconds of the playing song), ASpeed the
+	// speed of the playing song and BSpeed that of the next one during that time
+	// (both 1 for a crossfade) and EaseBack how long the next song then takes to
+	// return to speed 1 (0 for none). The gap between the two tempi is shared:
+	// each song changes its speed by about half of it, which is less to hear.
+	// ASpeed is 0 in a Plan nobody filled it in for: read it with PlayingSpeed.
+	Overlap, ASpeed, BSpeed, EaseBack float64
+	// GainB is the gain, in dB, the next song is played with so that it is as
+	// loud as the playing one (MatchGain; the player fills it in, planning from
+	// two songs' beats does not know what the decks are doing).
+	GainB float64
 	// Why says in words why the plan is what it is.
 	Why string
 }
+
+// PlayingSpeed is the speed of the playing song during the overlap.
+func (p Plan) PlayingSpeed() float64 {
+	if p.ASpeed == 0 {
+		return 1
+	}
+	return p.ASpeed
+}
+
+// Match is the speed the next song would have to play at for its beats to meet
+// those of the playing song at normal speed: BSpeed relative to PlayingSpeed. Of
+// the two, the next song covers Match times as much of its own time as the
+// playing song covers of its.
+func (p Plan) Match() float64 { return p.BSpeed / p.PlayingSpeed() }
 
 func (s Song) analysed() bool { return s.Edges.AudioEnd > 0 }
 
@@ -111,9 +135,16 @@ func For(a, b Song) Plan {
 	if math.Abs(speed-1) > 1e-3 {
 		ease = EaseSeconds
 	}
+	// Share the gap: the next song plays at sqrt(speed) and the playing one at
+	// 1/sqrt(speed), whose ratio is still speed, so the beats still meet.
+	half := math.Sqrt(speed)
+	why := fmt.Sprintf("beat-matched over %d beats%s, next song at %.1f%% speed", Beats, feel, speed*100)
+	if ease > 0 {
+		why = fmt.Sprintf("beat-matched over %d beats%s, playing song at %.1f%% and next song at %.1f%% speed", Beats, feel, 100/half, 100*half)
+	}
 	return Plan{
-		Kind: BeatMatch, AStart: aStart, BFrom: start.Anchor, Overlap: overlap, BSpeed: speed, EaseBack: ease,
-		Why: fmt.Sprintf("beat-matched over %d beats%s, next song at %.1f%% speed", Beats, feel, speed*100),
+		Kind: BeatMatch, AStart: aStart, BFrom: start.Anchor, Overlap: overlap,
+		ASpeed: 1 / half, BSpeed: half, EaseBack: ease, Why: why,
 	}
 }
 

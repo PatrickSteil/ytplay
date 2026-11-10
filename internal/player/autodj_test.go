@@ -328,6 +328,13 @@ func sureSong(length, audioEnd, period, startAnchor, endAnchor float64) autodj.S
 // beatSongs knows a (period 0.5 s, its beat ends at 19.5 s of 20) and b (period
 // 0.48 s, its beat starts at 0.3 s). The plan: b starts when a is at
 // 19.5 - 16*0.5 = 11.5 s, at speed 0.96.
+// beatSpeed is the speed b plays at: the tempo gap (0.96) is shared with the
+// playing song, so each takes its square root.
+var (
+	beatSpeed    = math.Sqrt(0.96)
+	beatSpeedCmd = "set_property speed " + strconv.FormatFloat(beatSpeed, 'g', -1, 64)
+)
+
 func beatSongs(url string) (autodj.Song, bool) {
 	switch url {
 	case "a":
@@ -363,8 +370,8 @@ func clockedPlayer(t *testing.T, quant float64, shift time.Duration) (p *Player,
 func TestBeatMatchSetsTheSpeedBeforeStarting(t *testing.T) {
 	_, _, b, _ := clockedPlayer(t, 0.05, 0)
 	calls := waitCalls(t, "b prepared", b, func(c []string) bool { return has(c, "set_property volume 0") })
-	if !has(calls, "set_property speed 0.96") {
-		t.Fatalf("b should be set to speed 0.96: %q", calls)
+	if !has(calls, beatSpeedCmd) {
+		t.Fatalf("b should be set to speed %v: %q", beatSpeed, calls)
 	}
 	if has(calls, "set_property pause false") {
 		t.Errorf("b must not have started yet: %q", calls)
@@ -462,7 +469,7 @@ func TestSpeedEasesBackToOneAfterTheOverlap(t *testing.T) {
 	}
 	for i := 1; i < len(speeds); i++ {
 		if speeds[i] < speeds[i-1]-1e-9 || speeds[i] > 1+1e-9 {
-			t.Errorf("speeds %v should rise monotonically from 0.96 to 1", speeds)
+			t.Errorf("speeds %v should rise monotonically from the beat-match speed to 1", speeds)
 			break
 		}
 	}
@@ -482,7 +489,7 @@ func TestSkippingDuringABeatMatchEasesTheSpeedBack(t *testing.T) {
 
 func TestDroppingTheNextSongPutsItsSpeedBack(t *testing.T) {
 	p, _, b, _ := clockedPlayer(t, 0.05, 0)
-	waitCalls(t, "prepared", b, func(c []string) bool { return has(c, "set_property speed 0.96") })
+	waitCalls(t, "prepared", b, func(c []string) bool { return has(c, beatSpeedCmd) })
 	p.SetAutoDJ(false, nil)
 	calls := waitCalls(t, "dropped", b, func(c []string) bool { return has(c, "stop") })
 	if !has(calls, "set_property speed 1") {
@@ -517,7 +524,7 @@ func TestACrossfadeNeverChangesTheSpeed(t *testing.T) {
 
 func TestSkippingBeforeABeatMatchStartsPlaysTheNextSongAtNormalSpeed(t *testing.T) {
 	p, _, b, _ := clockedPlayer(t, 0.05, 0)
-	waitCalls(t, "prepared", b, func(c []string) bool { return has(c, "set_property speed 0.96") })
+	waitCalls(t, "prepared", b, func(c []string) bool { return has(c, beatSpeedCmd) })
 	p.mu.Lock()
 	p.trans.running = true // pretend the ramp loop has not started it yet: it is not audible
 	p.mu.Unlock()
@@ -637,7 +644,7 @@ func phasePlayer(t *testing.T, off time.Duration, tau, settle float64, tweaks ..
 	p, _, fb, t0 = clockedPlayer(t, 0.05, 0)
 	// The commands the player sent before the hook existed (seek, volume, speed)
 	// are the sim's starting state.
-	sim := &simDeck{pos0: 0.3, speed: 0.96, delay: startLatency + off, quant: 0.05}
+	sim := &simDeck{pos0: 0.3, speed: beatSpeed, delay: startLatency + off, quant: 0.05}
 	fb.mu.Lock()
 	fb.posFn, fb.onCmd = sim.reported, sim.onCommand
 	fb.mu.Unlock()
@@ -650,7 +657,7 @@ func (s *simDeck) deltaAt(t0 time.Time, afterStart time.Duration) float64 {
 	w := t0.Add(500*time.Millisecond + afterStart) // a is at 11.5 s at t0 + 0.5 s
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ref := 0.3 + 0.96*afterStart.Seconds()
+	ref := 0.3 + beatSpeed*afterStart.Seconds()
 	return s.exactAt(w) - ref
 }
 
@@ -698,8 +705,8 @@ func TestPhaseCorrectionStaysWithinAFewPercent(t *testing.T) {
 		t.Fatal("no correction was made for a start 400 ms late")
 	}
 	for _, v := range sim.speeds {
-		if v < 0.96*0.97-1e-9 || v > 0.96*1.03+1e-9 {
-			t.Errorf("speed %v is more than 3%% from the beat-matched 0.96", v)
+		if v < beatSpeed*0.97-1e-9 || v > beatSpeed*1.03+1e-9 {
+			t.Errorf("speed %v is more than 3%% from the beat-matched %v", v, beatSpeed)
 		}
 	}
 }
@@ -719,8 +726,8 @@ func TestAStartOnTimeIsLeftAlone(t *testing.T) {
 	sim.mu.Lock()
 	defer sim.mu.Unlock()
 	for _, v := range sim.speeds {
-		if math.Abs(v-0.96) > 0.96*0.01 {
-			t.Errorf("a start that was on time was corrected to speed %v (more than 1%% from 0.96)", v)
+		if math.Abs(v-beatSpeed) > beatSpeed*0.01 {
+			t.Errorf("a start that was on time was corrected to speed %v (more than 1%% from %v)", v, beatSpeed)
 		}
 	}
 }
@@ -776,7 +783,7 @@ func TestALateBeatMatchBecomesACrossfadeForTheTimeThatIsLeft(t *testing.T) {
 	p.poll(bg) // preloads b
 	b.set("duration", 180)
 	p.poll(bg) // prepares it: speed 0.96, at 0.3 s
-	if !has(b.snapshot(), "set_property speed 0.96") {
+	if !has(b.snapshot(), beatSpeedCmd) {
 		t.Fatalf("b should have been prepared for the beat-match: %q", b.snapshot())
 	}
 	a.set("time-pos", 14) // but only now did the playing song get close enough to be armed: 2.5 s late
@@ -814,8 +821,8 @@ func TestNoiseInThePositionReadingsIsNotChased(t *testing.T) {
 	sim.mu.Lock()
 	defer sim.mu.Unlock()
 	for _, v := range sim.speeds {
-		if math.Abs(v-0.96) > 0.96*0.005 {
-			t.Errorf("speed %v: the loop chased noise (more than 0.5%% from 0.96)", v)
+		if math.Abs(v-beatSpeed) > beatSpeed*0.005 {
+			t.Errorf("speed %v: the loop chased noise (more than 0.5%% from %v)", v, beatSpeed)
 		}
 	}
 }
@@ -837,5 +844,15 @@ func TestACorrectionIsNotMadeMoreOftenThanPhaseEvery(t *testing.T) {
 	}
 	if len(sim.speeds) > 6 { // 1.5 s at one every 0.3 s is 5, one more for luck
 		t.Errorf("%d corrections in 1.5 s, want at most one every 300 ms", len(sim.speeds))
+	}
+}
+
+func TestThePlayingSongTakesItsShareOfTheTempoGap(t *testing.T) {
+	_, a, b, _ := clockedPlayer(t, 0.05, 0)
+	waitCalls(t, "b started", b, func(c []string) bool { return has(c, "set_property pause false") })
+	want := 1 / beatSpeed
+	calls := waitCalls(t, "a sped up", a, func(c []string) bool { return lastSpeed(c) != 1 })
+	if got := lastSpeed(calls); math.Abs(got-want) > 1e-9 {
+		t.Errorf("the playing song was set to speed %v, want %v (it and b share the 4%% gap)", got, want)
 	}
 }

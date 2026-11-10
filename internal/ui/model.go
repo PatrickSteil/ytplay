@@ -429,7 +429,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			st.analysisFailed, st.analysisErr = true, msg.err.Error()
 		} else {
 			st.res, st.hasRes = msg.res, true
-			m.songs.put(msg.id, autodj.Song{Length: m.tracks[msg.id].Duration, Edges: msg.res.Edges})
+			m.songs.put(msg.id, autodj.Song{Length: m.tracks[msg.id].Duration, Edges: msg.res.Edges, Loudness: msg.res.Loudness, Peak: msg.res.Peak})
 		}
 		m.stats[msg.id] = st
 		queued := m.startQueuedAnalyses() // a slot is free

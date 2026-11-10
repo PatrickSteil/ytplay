@@ -128,3 +128,30 @@ func TestWriteWAVRoundTrip(t *testing.T) {
 		near(t, "sample", got, float64(want), 1.0/32767)
 	}
 }
+
+func TestRenderPlaysThePlayingSongAtItsSpeedDuringTheOverlap(t *testing.T) {
+	// A click in the playing song 2 s (of its time) after AStart is heard 1 s after
+	// it at speed 2, and the overlap is over twice as soon.
+	a := make([]float32, 60*sr)
+	a[int((20+2)*sr)] = 1
+	plan := testPlan
+	plan.ASpeed, plan.Overlap = 2, 8
+	out := Render(a, constant(40, 0), plan, 3, 4, resample)
+	near(t, "click in the playing song", impulseAt(out, 3, 7), 3+1, 3.0/sr)
+	if want := int((3 + 4 + 4) * sr); math.Abs(float64(len(out)-want)) > 2 {
+		t.Errorf("length = %d samples, want %d (the 8 s of the playing song take 4 s at speed 2)", len(out), want)
+	}
+	// the volumes cross over the 4 s it takes
+	b := Render(constant(40, 0), constant(40, 1), plan, 3, 4, resample)
+	near(t, "B in the middle", float64(b[int((3+2)*sr)]), math.Sqrt(0.5), 1e-3)
+	near(t, "B after the overlap", float64(b[int((3+4+1)*sr)]), 1, 1e-6)
+}
+
+func TestRenderAppliesTheGainOfTheNextSong(t *testing.T) {
+	plan := testPlan
+	plan.GainB = -6.0206 // half the amplitude
+	out := Render(constant(40, 0), constant(40, 1), plan, 3, 4, resample)
+	near(t, "B after the overlap", float64(out[int((3+8+1)*sr)]), 0.5, 1e-3)
+	a := Render(constant(40, 1), constant(40, 0), plan, 3, 4, resample)
+	near(t, "A is not touched", float64(a[int(1*sr)]), 1, 1e-6)
+}

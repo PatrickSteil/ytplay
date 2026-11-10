@@ -34,7 +34,13 @@ func TestBeatMatchWhenBothEndsAreSure(t *testing.T) {
 	}
 	near(t, "AStart", p.AStart, 200.2-16*0.5, 1e-9)
 	near(t, "BFrom", p.BFrom, 0.3, 1e-9)
-	near(t, "BSpeed", p.BSpeed, 0.48/0.5, 1e-9)
+	near(t, "Match", p.Match(), 0.48/0.5, 1e-9)
+	// The gap of 4% is shared. B's beats are closer together (0.48 s against
+	// 0.5 s), so B is slowed down by about 2% and the playing song is sped up by
+	// about 2%; their beats are then 0.49 s apart, and still meet.
+	near(t, "BSpeed", p.BSpeed, math.Sqrt(0.48/0.5), 1e-9)
+	near(t, "PlayingSpeed", p.PlayingSpeed(), 1/math.Sqrt(0.48/0.5), 1e-9)
+	near(t, "beat of B", 0.48/p.BSpeed, 0.5/p.PlayingSpeed(), 1e-9)
 	near(t, "Overlap", p.Overlap, 200.6-(200.2-16*0.5), 1e-9)
 	near(t, "EaseBack", p.EaseBack, EaseSeconds, 1e-9)
 	if !strings.Contains(p.Why, "beat") {
@@ -111,7 +117,7 @@ func TestHalfAndDoubleTimeAreBeatMatchedWithoutBigSpeedChanges(t *testing.T) {
 			t.Errorf("%s: plan = %+v (%s), want a beat-match", name, p, p.Why)
 			continue
 		}
-		near(t, name+": BSpeed", p.BSpeed, tc.wantSpeed, 1e-9)
+		near(t, name+": Match", p.Match(), tc.wantSpeed, 1e-9)
 		if !strings.Contains(p.Why, tc.wantWhy) {
 			t.Errorf("%s: Why = %q, should mention %q", name, p.Why, tc.wantWhy)
 		}
@@ -292,7 +298,7 @@ func TestEndToEndBeatsLineUp(t *testing.T) {
 			if tb < p.BFrom {
 				continue
 			}
-			real := p.AStart + (tb-p.BFrom)/p.BSpeed // seconds on A's clock
+			real := p.AStart + (tb-p.BFrom)/p.Match() // A's position that sounds together with it
 			if real > beatsA[len(beatsA)-1]+0.03 {
 				break // past A's last kick there is nothing of A left to line up with
 			}
@@ -368,7 +374,7 @@ func TestEndToEndHalfAndDoubleTimeBeatsLineUp(t *testing.T) {
 		var onA []float64
 		for _, tb := range beatsB {
 			if tb >= p.BFrom-0.03 {
-				onA = append(onA, p.AStart+(tb-p.BFrom)/p.BSpeed)
+				onA = append(onA, p.AStart+(tb-p.BFrom)/p.Match())
 			}
 		}
 		lastA := beatsA[len(beatsA)-1] + 0.03
@@ -385,9 +391,37 @@ func TestEndToEndHalfAndDoubleTimeBeatsLineUp(t *testing.T) {
 		if worst > 0.025 {
 			t.Errorf("%s: a kick misses by %.0f ms, want within 25 ms (speed %.4f, %s)", name, worst*1000, p.BSpeed, p.Why)
 		}
-		if math.Abs(p.BSpeed-1) > MaxTempoGap {
-			t.Errorf("%s: speed %.3f is further than %.0f%% from 1", name, p.BSpeed, MaxTempoGap*100)
+		if math.Abs(p.Match()-1) > MaxTempoGap {
+			t.Errorf("%s: speed %.3f is further than %.0f%% from 1", name, p.Match(), MaxTempoGap*100)
 		}
 		t.Logf("%s: %d kicks meet, worst miss %.1f ms (speed %.4f, %s)", name, n, worst*1000, p.BSpeed, p.Why)
+	}
+}
+
+func TestCrossfadeAndEqualTemposLeaveBothSpeedsAlone(t *testing.T) {
+	if p := For(Song{Length: 230}, Song{Length: 200}); p.PlayingSpeed() != 1 || p.BSpeed != 1 {
+		t.Errorf("a crossfade plays at %v and %v, want 1 and 1", p.PlayingSpeed(), p.BSpeed)
+	}
+	b := songB()
+	b.Edges.Start.Period = 0.5
+	if p := For(songA(), b); p.PlayingSpeed() != 1 || p.BSpeed != 1 || p.Match() != 1 {
+		t.Errorf("equal tempi play at %v and %v, want 1 and 1", p.PlayingSpeed(), p.BSpeed)
+	}
+}
+
+func TestEachSongChangesItsSpeedByHalfTheGapAtMost(t *testing.T) {
+	for _, period := range []float64{0.48, 0.5 * 1.059, 0.5 / 1.059, 0.25 * 1.04} {
+		b := songB()
+		b.Edges.Start.Period = period
+		p := For(songA(), b)
+		if p.Kind != BeatMatch {
+			continue
+		}
+		gap := math.Abs(p.Match() - 1)
+		for name, v := range map[string]float64{"playing": p.PlayingSpeed(), "next": p.BSpeed} {
+			if d := math.Abs(v - 1); d > gap/2+0.002 {
+				t.Errorf("period %v: the %s song changes its speed by %.2f%%, more than half of the %.2f%% gap", period, name, d*100, gap*100)
+			}
+		}
 	}
 }

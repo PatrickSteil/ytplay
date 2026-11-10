@@ -35,7 +35,7 @@ var (
 	// easeScale scales how long the speed takes to ease back (1: the plan's
 	// time; tests make it small), easeStep is the time between two steps.
 	easeScale = 1.0
-	easeStep  = 500 * time.Millisecond
+	easeStep  = 100 * time.Millisecond
 	// The next song of a beat-matched transition is held in phase by steering
 	// its speed: an error is removed over about phaseTau seconds, readings of the
 	// first phaseSettle seconds after it started are not used, and the speed
@@ -89,6 +89,10 @@ type transition struct {
 	startedAt time.Time
 	// lastCorrection is when the speed was last steered.
 	lastCorrection time.Time
+	// plannedAt is when (seconds after the player's epoch) the playing song was
+	// at AStart, as worked out from its position before its speed was changed
+	// for the overlap. From then on the next song is steered against it.
+	plannedAt float64
 }
 
 // posSample is one reading of a position and when it arrived.
@@ -145,13 +149,15 @@ func (p *Player) planTransition(ctx context.Context) (autodj.Plan, bool) {
 	a, b := autodj.Song{Length: lengthA}, autodj.Song{Length: lengthB}
 	if p.analyses != nil {
 		if s, ok := p.analyses(p.q.urls[p.q.pos]); ok {
-			a.Edges = s.Edges
+			a.Edges, a.Loudness, a.Peak = s.Edges, s.Loudness, s.Peak
 		}
 		if s, ok := p.analyses(p.pre.url); ok {
-			b.Edges = s.Edges
+			b.Edges, b.Loudness, b.Peak = s.Edges, s.Loudness, s.Peak
 		}
 	}
-	return autodj.For(a, b), true
+	plan := autodj.For(a, b)
+	plan.GainB = autodj.MatchGain(a, b, p.gain[p.active])
+	return plan, true
 }
 
 // pollTransition prepares the next song and arms the ramp loop when the end of
@@ -213,6 +219,7 @@ func (p *Player) prepareTransition(ctx context.Context, tr *transition) bool {
 	if _, err := d.Command(ctx, "set_property", "volume", 0); err != nil {
 		return false
 	}
+	p.setGain(ctx, p.pre.deck, tr.plan.GainB) // while it is silent: no jump
 	if tr.plan.BSpeed != 1 {
 		if _, err := d.Command(ctx, "set_property", "speed", tr.plan.BSpeed); err != nil {
 			return false
@@ -313,6 +320,7 @@ func (p *Player) stepTransition(tr *transition) (more bool, startIn time.Duratio
 			return false, -1
 		}
 		tr.started, tr.startedAt = true, time.Now()
+		p.beginOverlap(ctx, tr, pos, true)
 	}
 	if tr.started {
 		p.setGains(ctx, tr, math.Max(0, u))
@@ -338,7 +346,7 @@ func (p *Player) correctPhase(ctx context.Context, tr *transition) {
 		return
 	}
 	tr.bSamples = recent(append(tr.bSamples, posSample{arrived, pos}), arrived, phaseWindow)
-	planned := clockOffset(tr.samples, p.epoch) + tr.plan.AStart // seconds after epoch at which the playing song is at AStart
+	planned := tr.plannedAt // seconds after epoch at which the playing song was at AStart
 	delta, n := math.Inf(-1), 0
 	for _, s := range tr.bSamples {
 		if s.wall.Sub(tr.startedAt).Seconds() < phaseSettle {
@@ -370,7 +378,7 @@ func (p *Player) crossfadeFrom(ctx context.Context, tr *transition, pos float64)
 	end := tr.plan.AStart + tr.plan.Overlap
 	if tr.plan.Kind == autodj.BeatMatch {
 		p.resetSpeed(ctx, p.pre.deck)
-		tr.plan.Kind, tr.plan.BSpeed, tr.plan.EaseBack = autodj.Crossfade, 1, 0
+		tr.plan.Kind, tr.plan.ASpeed, tr.plan.BSpeed, tr.plan.EaseBack = autodj.Crossfade, 1, 1, 0
 	}
 	tr.plan.AStart, tr.plan.Overlap = pos, end-pos
 }
@@ -390,7 +398,37 @@ func (p *Player) startNext(tr *transition) bool {
 		return false
 	}
 	tr.started, tr.startedAt = true, time.Now()
+	p.beginOverlap(ctx, tr, 0, false)
 	return true
+}
+
+// beginOverlap is what the playing song does as the next one starts sounding in
+// a beat-matched transition: its moment of reaching AStart is fixed (the
+// next song is steered against it), and it takes its share of the tempo gap.
+// late is whether pos (its position) is already past AStart. The caller holds
+// p.mu.
+func (p *Player) beginOverlap(ctx context.Context, tr *transition, pos float64, late bool) {
+	if tr.plan.Kind != autodj.BeatMatch {
+		return
+	}
+	switch {
+	case len(tr.samples) >= minClockSamples || (!late && len(tr.samples) > 0):
+		tr.plannedAt = clockOffset(tr.samples, p.epoch) + tr.plan.AStart
+	default:
+		tr.plannedAt = time.Since(p.epoch).Seconds() - (pos - tr.plan.AStart)
+	}
+	if speed := tr.plan.PlayingSpeed(); speed != 1 {
+		now := time.Since(p.epoch).Seconds()
+		if _, err := p.decks[p.active].Command(ctx, "set_property", "speed", speed); err == nil {
+			p.speed[p.active] = speed
+			// The playing song speeds up a little before it reaches AStart (the
+			// next song is ordered ahead of its start), so it gets there earlier
+			// than it would have at normal speed.
+			if lead := tr.plannedAt - now; !late && lead > 0 {
+				tr.plannedAt = now + lead/speed
+			}
+		}
+	}
 }
 
 // setGains sets the volumes of the two decks for a position u (0..1) in the
@@ -443,11 +481,31 @@ func (p *Player) endTransition(ctx context.Context, restorePlaying, continuing b
 	if tr.prepared && p.pre != nil {
 		_, _ = p.decks[p.pre.deck].Command(ctx, "set_property", "volume", p.master)
 		if !continuing {
-			p.resetSpeed(ctx, p.pre.deck)
+			p.resetDeck(ctx, p.pre.deck)
 		}
 	}
 	if restorePlaying && tr.started {
 		_, _ = p.decks[p.active].Command(ctx, "set_property", "volume", p.master)
+		p.resetSpeed(ctx, p.active) // it took its share of the tempo gap for the overlap
+	}
+}
+
+// resetDeck puts a deck back to normal speed and no gain at once: it is about
+// to hold another song, or the one it held was never heard. The caller holds
+// p.mu.
+func (p *Player) resetDeck(ctx context.Context, deck int) {
+	p.resetSpeed(ctx, deck)
+	p.setGain(ctx, deck, 0)
+}
+
+// setGain sets a deck's gain (dB) if it is not that already. It is best effort:
+// an mpv without volume-gain just plays the song as it is. The caller holds p.mu.
+func (p *Player) setGain(ctx context.Context, deck int, dB float64) {
+	if p.gain[deck] == dB {
+		return
+	}
+	if _, err := p.decks[deck].Command(ctx, "set_property", "volume-gain", dB); err == nil {
+		p.gain[deck] = dB
 	}
 }
 
@@ -487,7 +545,10 @@ func (p *Player) startEase(deck int, seconds float64) {
 			case <-p.stopped:
 				return
 			}
-			speed := from + (1-from)*float64(k)/float64(n)
+			speed := 1.0
+			if x := float64(k) / float64(n); k < n { // smoothstep: no jerk at either end
+				speed = from + (1-from)*x*x*(3-2*x)
+			}
 			p.mu.Lock()
 			if ctx.Err() != nil {
 				p.mu.Unlock()

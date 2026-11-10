@@ -100,7 +100,7 @@ func TestPreviewTransitions(t *testing.T) {
 			}
 			p := For(songs[i].song, songs[j].song)
 			if p.Kind == BeatMatch {
-				matched = append(matched, pair{i, j, p, math.Abs(p.BSpeed - 1)})
+				matched = append(matched, pair{i, j, p, math.Abs(p.Match() - 1)})
 			} else {
 				plain = append(plain, pair{i, j, p, 0})
 			}

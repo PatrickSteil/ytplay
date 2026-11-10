@@ -103,7 +103,7 @@ func (p *Player) startPreload(ctx context.Context) {
 		}
 	}
 	d := p.decks[i]
-	p.resetSpeed(ctx, i) // a speed left over from an easing that was cut short
+	p.resetDeck(ctx, i) // a speed or gain left over from a song that was mixed in
 	if _, err := d.Command(ctx, "set_property", "pause", true); err != nil {
 		p.preFailed = url
 		return
@@ -164,7 +164,7 @@ func (p *Player) handoff(ctx context.Context) bool {
 	if started {
 		p.startEase(pre.deck, ease) // it was sounding at the beat-matched speed
 	} else if hadTransition {
-		p.resetSpeed(ctx, pre.deck)
+		p.resetDeck(ctx, pre.deck)
 	}
 	p.emitState()
 	return true
