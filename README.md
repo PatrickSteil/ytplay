@@ -13,6 +13,12 @@ go install github.com/PatrickSteil/ytplay/cmd/ytplay@latest
 ytplay
 ```
 
+Or download a build for Linux or macOS (amd64 or arm64) from the
+[releases](https://github.com/PatrickSteil/ytplay/releases), check it against
+`SHA256SUMS`, and put `ytplay` somewhere in your `PATH`. A release is made by pushing a
+tag (`git tag v0.1.0 && git push --tags`); `scripts/build-release.sh` builds the same archives locally. `ytplay -version` prints the
+version (the tag, or `dev-<commit>` for a build from a checkout).
+
 From a checkout: `make` builds, `make test` tests, `make install` installs to
 `~/.local/bin` (`PREFIX=/usr/local` for system-wide; `make help` lists all).
 
@@ -85,6 +91,10 @@ audio below 1% of the song's loudest moment (-40 dB). This uses the audible rang
 song once it has been analysed: the next song in the queue is analysed (lightly) while the playing one plays, so its start
 is skipped from the first moment, while the very first song only gets its end trimmed. Autodj plans its own hand-overs;
 songs of which only part was analysed (very long tracks) are trimmed where the analysis knows.
+
+The colours of the screen (highlights, frames, the progress bar, popups) are taken from the cover of the
+playing song: its most prominent colour, brightened to stay readable. A song without a cover, or with a gray one,
+gets blue. While autodj is on, the line with the time says `⇄ AUTODJ`.
 
 The playing song's key (in the line under its title) and its row in the queue are drawn in the colour of its Camelot key.
 While `:auto` is on and the queue was sorted with `:sort`, songs added by `:radio` are sorted in as soon as they have been analysed (arranged again), so `:sort` does not need to be pressed twice.

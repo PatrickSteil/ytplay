@@ -1,3 +1,4 @@
 /ytplay
 *.test
 /bin/
+/dist/

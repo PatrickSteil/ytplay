@@ -38,9 +38,14 @@ func main() {
 
 func run() int {
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: ytplay\n\nA terminal YouTube music player. Requires mpv and yt-dlp.")
+		fmt.Fprintln(os.Stderr, "usage: ytplay [-version]\n\nA terminal YouTube music player. Requires mpv and yt-dlp.")
 	}
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(versionString())
+		return 0
+	}
 
 	// Startup checks happen before the TUI starts.
 	mpvPath, err := exec.LookPath("mpv")

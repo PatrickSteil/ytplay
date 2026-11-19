@@ -11,7 +11,8 @@ OUT     := bin/$(BINARY)
 PREFIX  ?= $(HOME)/.local
 BINDIR  ?= $(PREFIX)/bin
 GOFLAGS ?= -trimpath
-LDFLAGS ?= -s -w
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS ?= -s -w -X main.version=$(VERSION)
 
 .DEFAULT_GOAL := build
 .PHONY: build test race vet fmt check install uninstall clean help
