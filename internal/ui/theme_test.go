@@ -1,12 +1,17 @@
 package ui
 
 import (
+	"image"
+	"image/color"
+	"image/draw"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/PatrickSteil/ytplay/internal/cover"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 )
 
@@ -21,11 +26,15 @@ func withColours(t *testing.T) {
 }
 
 const (
-	blueAccent  = "\x1b[38;5;75m"  // the normal accent
-	grayFrame   = "\x1b[38;5;245m" // the normal frame of a panel that is not focused
-	greenAccent = "\x1b[38;5;78m"  // the accent while autodj is on
-	greenFrame  = "\x1b[38;5;65m"  // and the frame
+	blueAccent = "\x1b[38;5;75m"  // the accent of a song without a cover colour
+	grayFrame  = "\x1b[38;5;245m" // and the frame of a panel that is not focused
 )
+
+// coverTheme is a theme as a cover gives it, and the code of its accent in the
+// 256-colour palette (#00d787 is colour 42 of it).
+var coverTheme = newTheme("#00d787", "#5f8787")
+
+const coverAccent = "\x1b[38;5;42m"
 
 // playingModel is a wide screen with a song playing, autodj on or off.
 func playingModel(t *testing.T, autoDJ bool, width int) Model {
@@ -42,50 +51,110 @@ func playingModel(t *testing.T, autoDJ bool, width int) Model {
 	return m
 }
 
-func TestThemeIsBlueUnlessAutoDJIsOn(t *testing.T) {
-	off, on := queueModel(t, 2).theme(), playingModel(t, true, 140).theme()
-	if off.accent.GetForeground() != lipgloss.Color("75") || off.frame.GetForeground() != lipgloss.Color("245") {
-		t.Errorf("normal theme: accent %v, frame %v, want blue 75 and gray 245", off.accent.GetForeground(), off.frame.GetForeground())
-	}
-	if on.accent.GetForeground() != lipgloss.Color("78") || on.frame.GetForeground() != lipgloss.Color("65") {
-		t.Errorf("autodj theme: accent %v, frame %v, want green 78 and muted green 65", on.accent.GetForeground(), on.frame.GetForeground())
-	}
-	if !on.accentB.GetBold() || !off.accentB.GetBold() {
-		t.Error("the bold accent must stay bold in both themes")
+// plainCover is a rendered cover of a picture of one colour.
+func plainCover(c color.RGBA) string {
+	img := image.NewRGBA(image.Rect(0, 0, 64, 36))
+	draw.Draw(img, img.Bounds(), image.NewUniform(c), image.Point{}, draw.Src)
+	return cover.Render(img, 10, 5)
+}
+
+func greenCover() string { return plainCover(color.RGBA{30, 180, 60, 255}) }
+
+// coveredModel is playingModel once the cover of the playing song (e0) has arrived.
+func coveredModel(t *testing.T, autoDJ bool, width int, rendered string) Model {
+	t.Helper()
+	m, _ := update(playingModel(t, autoDJ, width), coverMsg{id: "e0", rendered: rendered})
+	return m
+}
+
+// codeOf is the escape sequence that starts text in style s.
+func codeOf(s lipgloss.Style) string { return strings.SplitN(s.Render("x"), "x", 2)[0] }
+
+func TestThemeIsBlueWithoutACoverColour(t *testing.T) {
+	for name, m := range map[string]Model{
+		"no cover":      playingModel(t, false, 140),
+		"no cover, dj":  playingModel(t, true, 140),
+		"gray cover":    coveredModel(t, false, 140, "COVER"),
+		"nothing plays": newTestModel(),
+	} {
+		th := m.theme()
+		if th.accent.GetForeground() != lipgloss.Color("75") || th.frame.GetForeground() != lipgloss.Color("245") {
+			t.Errorf("%s: accent %v, frame %v, want blue 75 and gray 245", name, th.accent.GetForeground(), th.frame.GetForeground())
+		}
+		if !th.accentB.GetBold() {
+			t.Errorf("%s: the bold accent must stay bold", name)
+		}
 	}
 }
 
-func TestTheWholeScreenTurnsGreenWhileAutoDJIsOn(t *testing.T) {
+func TestThemeTakesTheColourOfTheCoverOfThePlayingSong(t *testing.T) {
+	m := coveredModel(t, false, 140, greenCover())
+	th := m.theme()
+	if th.accent.GetForeground() == lipgloss.Color("75") || th.frame.GetForeground() == lipgloss.Color("245") {
+		t.Fatalf("the theme did not change: accent %v, frame %v", th.accent.GetForeground(), th.frame.GetForeground())
+	}
+	acc, frame, _ := cover.Accent(greenCover())
+	if th.accent.GetForeground() != lipgloss.Color(acc) || th.frame.GetForeground() != lipgloss.Color(frame) {
+		t.Errorf("accent %v, frame %v, want %s and %s", th.accent.GetForeground(), th.frame.GetForeground(), acc, frame)
+	}
+	if !th.accentB.GetBold() {
+		t.Error("the bold accent must stay bold")
+	}
+}
+
+func TestThemeFollowsTheSongThatPlays(t *testing.T) {
+	m := coveredModel(t, false, 140, greenCover())
+	// the cover of a song that is not playing changes nothing
+	m2, _ := update(m, coverMsg{id: "e1", rendered: "COVER"})
+	if m2.theme().accent.GetForeground() != m.theme().accent.GetForeground() {
+		t.Error("the cover of another song changed the theme")
+	}
+	// the next song has no colour: back to blue
+	m, _ = update(m, propEvent("playlist-pos", "1"))
+	if m.theme().accent.GetForeground() != lipgloss.Color("75") {
+		t.Errorf("the next song has no cover colour, accent is %v, want blue", m.theme().accent.GetForeground())
+	}
+	// and back to the first one
+	m, _ = update(m, propEvent("playlist-pos", "0"))
+	if m.theme().accent.GetForeground() == lipgloss.Color("75") {
+		t.Error("the first song is playing again, but the theme is still blue")
+	}
+}
+
+func TestTheWholeScreenTakesTheCoverColour(t *testing.T) {
 	withColours(t)
 	for name, width := range map[string]int{"three columns": 140, "stacked": 80} {
-		off, on := playingModel(t, false, width).View(), playingModel(t, true, width).View()
-		if !strings.Contains(off, blueAccent) || strings.Contains(off, greenAccent) || strings.Contains(off, greenFrame) {
-			t.Errorf("%s, autodj off: should be blue and have no green", name)
+		plain, covered := playingModel(t, false, width).View(), coveredModel(t, false, width, greenCover())
+		accent := codeOf(covered.theme().accent)
+		if !strings.Contains(plain, blueAccent) {
+			t.Errorf("%s, no cover colour: should be blue", name)
 		}
-		if !strings.Contains(on, greenAccent) || !strings.Contains(on, greenFrame) {
-			t.Errorf("%s, autodj on: no green accent or frame in the screen", name)
+		v := covered.View()
+		if !strings.Contains(v, accent) || !strings.Contains(v, codeOf(covered.theme().frame)) {
+			t.Errorf("%s: no accent or frame of the cover in the screen", name)
 		}
-		if strings.Contains(on, blueAccent) {
-			t.Errorf("%s, autodj on: a blue accent is left over (a place that does not use the theme)", name)
+		if strings.Contains(v, blueAccent) {
+			t.Errorf("%s: a blue accent is left over (a place that does not use the theme)", name)
 		}
 	}
 }
 
-func TestTheFramesAreGreenToo(t *testing.T) {
+func TestTheFramesTakeTheCoverColourToo(t *testing.T) {
 	withColours(t)
 	top := func(m Model) string { return strings.Split(m.View(), "\n")[0] }
-	if l := top(playingModel(t, false, 140)); !strings.Contains(l, grayFrame) || strings.Contains(l, greenFrame) {
+	m := coveredModel(t, false, 140, greenCover())
+	if l := top(playingModel(t, false, 140)); !strings.Contains(l, grayFrame) {
 		t.Errorf("normal frame line should be gray: %q", l)
 	}
-	if l := top(playingModel(t, true, 140)); !strings.Contains(l, greenFrame) || strings.Contains(l, grayFrame) {
-		t.Errorf("autodj frame line should be green: %q", l)
+	if l := top(m); !strings.Contains(l, codeOf(m.theme().frame)) || strings.Contains(l, grayFrame) {
+		t.Errorf("frame line should be in the frame colour of the cover: %q", l)
 	}
 	// stacked layout: the rules between the parts
-	rule := func(m Model) string { return m.rule() }
-	if r := rule(playingModel(t, true, 80)); !strings.Contains(r, greenFrame) {
-		t.Errorf("the rule should be green: %q", r)
+	m = coveredModel(t, false, 80, greenCover())
+	if r := m.rule(); !strings.Contains(r, codeOf(m.theme().frame)) {
+		t.Errorf("the rule should be in the frame colour of the cover: %q", r)
 	}
-	if r := rule(playingModel(t, false, 80)); !strings.Contains(r, grayFrame) {
+	if r := playingModel(t, false, 80).rule(); !strings.Contains(r, grayFrame) {
 		t.Errorf("the normal rule should be gray: %q", r)
 	}
 }
@@ -98,32 +167,67 @@ func TestPopupsFollowTheTheme(t *testing.T) {
 		"confirm popup":  func(m Model) []string { return m.confirmBox() },
 		"download popup": func(m Model) []string { return m.downloadBox() },
 	} {
-		off, on := strings.Join(box(playingModel(t, false, 140)), "\n"), strings.Join(box(playingModel(t, true, 140)), "\n")
-		if !strings.Contains(off, blueAccent) || strings.Contains(off, greenAccent) {
-			t.Errorf("%s with autodj off should be blue", name)
+		plain := strings.Join(box(playingModel(t, false, 140)), "\n")
+		m := coveredModel(t, false, 140, greenCover())
+		covered := strings.Join(box(m), "\n")
+		if !strings.Contains(plain, blueAccent) {
+			t.Errorf("%s without a cover colour should be blue", name)
 		}
-		if !strings.Contains(on, greenAccent) || strings.Contains(on, blueAccent) {
-			t.Errorf("%s with autodj on should be green, not blue", name)
+		if !strings.Contains(covered, codeOf(m.theme().accent)) || strings.Contains(covered, blueAccent) {
+			t.Errorf("%s should be in the colour of the cover, not blue", name)
 		}
 	}
 }
 
-func TestSwitchingAutoDJOnAndOffChangesTheColours(t *testing.T) {
+// autodj is shown by a badge on the progress line, not by the colours.
+func TestAutoDJDoesNotChangeTheColours(t *testing.T) {
 	withColours(t)
+	for name, rendered := range map[string]string{"cover colour": plainCover(color.RGBA{200, 30, 30, 255}), "no cover colour": "COVER"} {
+		for _, width := range []int{140, 80} {
+			off, on := coveredModel(t, false, width, rendered), coveredModel(t, true, width, rendered)
+			if off.theme().accent.GetForeground() != on.theme().accent.GetForeground() || off.theme().frame.GetForeground() != on.theme().frame.GetForeground() {
+				t.Errorf("%s, width %d: autodj changed the theme", name, width)
+			}
+			if strings.Contains(on.View(), "\x1b[38;5;78m") || strings.Contains(on.View(), "\x1b[38;5;65m") {
+				t.Errorf("%s, width %d: autodj draws in green", name, width)
+			}
+		}
+	}
+}
+
+func TestAutoDJShowsABadgeInTheNowPlayingText(t *testing.T) {
+	for _, width := range []int{140, 80} {
+		off, on := playingModel(t, false, width), playingModel(t, true, width)
+		if strings.Contains(ansi.Strip(off.View()), "AUTODJ") {
+			t.Errorf("width %d: a badge with autodj off", width)
+		}
+		if !strings.Contains(ansi.Strip(on.View()), "AUTODJ") {
+			t.Errorf("width %d: no badge with autodj on", width)
+		}
+	}
+	// also while the song loads
+	m := playingModel(t, true, 140)
+	m.loading = true
+	if !strings.Contains(ansi.Strip(m.progressLine()), "AUTODJ") {
+		t.Error("no badge while loading")
+	}
+}
+
+func TestSwitchingAutoDJOnAndOffShowsAndHidesTheBadge(t *testing.T) {
 	m := queueModel(t, 4)
 	m.width, m.height = 140, 40
 	m.deps.SetAutoDJ = (&autoRecorder{}).set
 	m, _ = typeCommand(m, "dj")
 	m = editCommand(m, "auto")
 	m, _ = send(m, "esc")
-	if v := m.View(); !strings.Contains(v, greenFrame) || strings.Contains(v, blueAccent) {
-		t.Error("with autodj on the screen should be green")
+	if !strings.Contains(ansi.Strip(m.View()), "AUTODJ") {
+		t.Error("with autodj on the screen should show the badge")
 	}
 	m, _ = typeCommand(m, "dj")
 	m = editCommand(m, "auto")
 	m, _ = send(m, "esc")
-	if v := m.View(); strings.Contains(v, greenAccent) || strings.Contains(v, greenFrame) || !strings.Contains(v, blueAccent) {
-		t.Error("with autodj off again the screen should be blue")
+	if strings.Contains(ansi.Strip(m.View()), "AUTODJ") {
+		t.Error("with autodj off again the badge should be gone")
 	}
 }
 
@@ -136,11 +240,9 @@ func TestOnlyTheThemeChoiceNamesAThemeOrAnAccentColour(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(src)
-	for _, name := range []string{"blueTheme", "greenTheme"} {
-		// the declaration and the one place that chooses
-		if n := strings.Count(text, name); n != 2 {
-			t.Errorf("%s appears %d times in view.go, want 2 (declaration and m.theme())", name, n)
-		}
+	// the declaration and the one place that chooses
+	if n := strings.Count(text, "blueTheme"); n != 2 {
+		t.Errorf("blueTheme appears %d times in view.go, want 2 (declaration and m.theme())", n)
 	}
 	colours := regexp.MustCompile(`lipgloss\.Color\("(\d+)"\)`).FindAllStringSubmatch(text, -1)
 	for _, c := range colours {

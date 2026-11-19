@@ -150,7 +150,7 @@ func TestWaveCellsOfNoSpaceAreNothing(t *testing.T) {
 func TestDrawWaveIsAsWideAsAskedInEveryColour(t *testing.T) {
 	withColours(t)
 	w := analyze.Wave{Seconds: 100, Level: flat(180, 100)}
-	for _, th := range []theme{blueTheme, greenTheme} {
+	for _, th := range []theme{blueTheme, coverTheme} {
 		for width := 1; width <= 80; width += 7 {
 			for _, rows := range []int{2, 4} {
 				lines := drawWave(w, 100, 37, width, rows, th)
@@ -173,7 +173,7 @@ func TestDrawWaveColoursWhatWasPlayedInTheThemesAccent(t *testing.T) {
 	for _, c := range []struct {
 		th     theme
 		accent string
-	}{{blueTheme, blueAccent}, {greenTheme, greenAccent}} {
+	}{{blueTheme, blueAccent}, {coverTheme, coverAccent}} {
 		line := drawWave(w, 10, 5.5, 10, 2, c.th)[0]
 		played, unplayed := strings.Index(line, c.accent), strings.Index(line, grayFrame)
 		if played < 0 || unplayed < 0 || played > unplayed {
@@ -228,7 +228,7 @@ func TestWaveCellsMarkWhereTheNextSongComesIn(t *testing.T) {
 func TestDrawWaveLightsUpTheTransitionInTheBoldAccent(t *testing.T) {
 	withColours(t)
 	w := analyze.Wave{Seconds: 10, Level: flat(255, 10)}
-	for _, th := range []theme{blueTheme, greenTheme} {
+	for _, th := range []theme{blueTheme, coverTheme} {
 		line := drawWaveMarked(w, 10, 2, 10, 2, th, 6, 9)[0]
 		if !strings.Contains(line, th.accentB.Render("███")) {
 			t.Errorf("the transition is not drawn in the bold accent:\n%q", line)

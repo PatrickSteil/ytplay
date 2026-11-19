@@ -54,18 +54,26 @@ func newTheme(accent, frame string) theme {
 	return theme{accent: a, accentB: a.Bold(true), frame: lipgloss.NewStyle().Foreground(lipgloss.Color(frame))}
 }
 
-var (
-	blueTheme  = newTheme("75", "245") // the normal colours
-	greenTheme = newTheme("78", "65")  // while autodj is on
-)
+// The default colours are of a song without a cover (or with one that has no
+// colour to take), and while nothing plays.
+var blueTheme = newTheme("75", "245")
 
-// theme is the colours to draw in: green while autodj is on, so that it can be
-// seen at a glance that the DJ is at work.
+// theme is the colours to draw in: those of the cover of the playing song, blue
+// when there are none.
 func (m Model) theme() theme {
-	if m.autoDJ {
-		return greenTheme
+	if t, ok := m.themes[m.currentID()]; ok {
+		return t
 	}
 	return blueTheme
+}
+
+// autoBadge marks the progress line while autodj is on (not by a colour: the
+// colours belong to the cover).
+func (m Model) autoBadge() string {
+	if !m.autoDJ {
+		return ""
+	}
+	return bold.Render(" · ⇄ AUTODJ")
 }
 
 // fit truncates s with "…" to w display columns and pads it with spaces to w.
@@ -234,7 +242,7 @@ func (m Model) progressLine() string {
 		icon = "⏸"
 	}
 	if m.loading {
-		return th.accent.Render(icon) + " " + dim.Render("Loading…") + m.onSpeaker()
+		return th.accent.Render(icon) + " " + dim.Render("Loading…") + m.onSpeaker() + m.autoBadge()
 	}
 	total := "--:--"
 	if m.total > 0 {
@@ -245,7 +253,7 @@ func (m Model) progressLine() string {
 	if m.total > 0 {
 		pct = fmt.Sprintf(" %d%%", int(min(max(m.elapsed/m.total, 0), 1)*100+0.5))
 	}
-	return th.accent.Render(strings.TrimRight(prefix, " ")) + pct + m.onSpeaker()
+	return th.accent.Render(strings.TrimRight(prefix, " ")) + pct + m.onSpeaker() + m.autoBadge()
 }
 
 // onSpeaker says which speaker the sound comes from while casting.

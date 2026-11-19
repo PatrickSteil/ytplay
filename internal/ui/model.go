@@ -19,6 +19,7 @@ import (
 
 	"github.com/PatrickSteil/ytplay/internal/analyze"
 	"github.com/PatrickSteil/ytplay/internal/autodj"
+	"github.com/PatrickSteil/ytplay/internal/cover"
 	"github.com/PatrickSteil/ytplay/internal/mpv"
 	"github.com/PatrickSteil/ytplay/internal/yt"
 )
@@ -169,6 +170,7 @@ type Model struct {
 	loading        bool
 	elapsed, total float64           // seconds, from the 500 ms poll
 	covers         map[string]string // rendered cover by video ID
+	themes         map[string]theme  // the colours of a cover, by video ID (none for a cover without colour)
 	stats          map[string]trackStats
 	infoAsked      map[string]bool // lookups already started: never repeated unless cancelled
 	analysisAsked  map[string]bool
@@ -273,7 +275,7 @@ func New(d Deps) Model {
 		deps: d, input: ti, dlInput: di, cmdInput: ci, bpmSet: map[string]float64{}, songs: newAnalysisStore(), width: 80, height: 24,
 		queueRunning: map[string]bool{}, queueCtx: queueCtx, queueCancel: queueCancel,
 		tracks: map[string]yt.Result{}, pos: -1, idle: true,
-		covers: map[string]string{}, coverAsked: map[string]bool{},
+		covers: map[string]string{}, themes: map[string]theme{}, coverAsked: map[string]bool{},
 		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{}, fullAsked: map[string]bool{}, volume: 100,
 		statsDelay: statsDelay, previewDelay: previewDelay,
 	}
@@ -470,6 +472,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case coverMsg:
 		if msg.err == nil && msg.rendered != "" {
 			m.covers[msg.id] = msg.rendered
+			if accent, frame, ok := cover.Accent(msg.rendered); ok {
+				m.themes[msg.id] = newTheme(accent, frame)
+			}
 		}
 		return m, nil
 
