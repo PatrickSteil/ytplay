@@ -81,6 +81,11 @@ func setupLogging() func() {
 
 func runTUI(ytdlp, mpvPath string) int {
 	defer setupLogging()()
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ytplay: config:", err)
+		return 1
+	}
 
 	if ct := os.Getenv("COLORTERM"); ct != "truecolor" && ct != "24bit" {
 		fmt.Fprintln(os.Stderr, "ytplay: warning: COLORTERM is not truecolor/24bit; the cover image will look wrong")
@@ -115,8 +120,10 @@ func runTUI(ytdlp, mpvPath string) int {
 	pool := analyze.NewPool(max(1, runtime.NumCPU()/2))
 	covers := cover.NewCache()
 	m := ui.New(ui.Deps{
-		Publish: publish,
-		Cover:   covers.Get,
+		Publish:      publish,
+		Cover:        covers.Get,
+		Autoplay:     cfg.autoplay,
+		SaveAutoplay: cfg.saveAutoplay,
 		Devices: func(ctx context.Context) ([]string, error) {
 			ds, err := cast.Discover(ctx, 3*time.Second)
 			names := make([]string, len(ds))

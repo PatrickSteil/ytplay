@@ -44,6 +44,7 @@ Keys that need no colon:
 | `u` | undo the last queue change (removing, moving, sorting, shuffling, clearing, adding, radio; up to 20, forgotten when the song changes) |
 | `0`–`9`, `=` | seek to 0%–90%, 100% |
 | `?` | open or close help |
+| `A` | toggle autoplay (automatic radio refills) |
 | Esc | back out of whatever is open |
 | Ctrl+C | quit |
 
@@ -82,6 +83,11 @@ the queue after Tab.
 | `:clear` | `X` | clear the queue (asks first: `y` or `n`; the playing song keeps going) |
 | `:help` | `h`, `?` | help popup (`j` `k` scroll on a small terminal) |
 | `:quit` | `q` | quit |
+
+Autoplay refills the queue when three or fewer songs remain after the current
+track. It defaults to off. ytplay saves the setting as `autoplay = true` or
+`autoplay = false` in `~/.config/ytplay/config.toml` (under `$XDG_CONFIG_HOME`
+if set). Each refill uses the default radio request of up to 10 similar songs.
 
 Casting (`:cast`) plays one song at a time on the speaker, which loads the stream from YouTube (AAC) or SoundCloud (HLS)
 by itself: autodj mixes and beat-matching only happen on this computer and are switched off while casting (silence

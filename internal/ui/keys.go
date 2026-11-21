@@ -3,16 +3,17 @@ package ui
 // Fixed keys. Command aliases also work as shortcuts (see commands.go).
 // The values are Bubble Tea key strings (tea.KeyMsg.String()).
 const (
-	keySearch  = "/" // the search bar, as ":find" without a name
-	keyCommand = ":" // the command line
-	keyHelp    = "?" // toggle the help popup
-	keyEnter   = "enter"
-	keyEsc     = "esc"
-	keyPause   = " "
-	keyCtrlC   = "ctrl+c"
-	keyDown    = "j"
-	keyUp      = "k"
-	keySeekEnd = "=" // Shift+0 on a German keyboard
+	keySearch   = "/" // the search bar, as ":find" without a name
+	keyCommand  = ":" // the command line
+	keyAutoplay = "A" // toggle automatic radio refills
+	keyHelp     = "?" // toggle the help popup
+	keyEnter    = "enter"
+	keyEsc      = "esc"
+	keyPause    = " "
+	keyCtrlC    = "ctrl+c"
+	keyDown     = "j"
+	keyUp       = "k"
+	keySeekEnd  = "=" // Shift+0 on a German keyboard
 
 	keyLeft    = "left"  // seek back
 	keyRight   = "right" // seek forward

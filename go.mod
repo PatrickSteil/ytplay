@@ -11,6 +11,7 @@ require (
 	github.com/hashicorp/mdns v1.0.7
 	github.com/lucasb-eyer/go-colorful v1.4.1
 	github.com/muesli/termenv v0.16.0
+	github.com/pelletier/go-toml/v2 v2.2.4
 	golang.org/x/image v0.47.0
 )
 

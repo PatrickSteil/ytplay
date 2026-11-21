@@ -74,8 +74,10 @@ type Actions interface {
 type Deps struct {
 	// Search looks up a name; failed names a source that could not be searched
 	// while the other's results are returned.
-	Search func(ctx context.Context, query string) (results []yt.Result, failed map[yt.Source]error, err error)
-	Player Actions
+	Search       func(ctx context.Context, query string) (results []yt.Result, failed map[yt.Source]error, err error)
+	Player       Actions
+	Autoplay     bool
+	SaveAutoplay func(bool) error
 	// Position reads time-pos and duration; it errors while nothing is loaded.
 	Position func(ctx context.Context) (elapsed, total float64, err error)
 	// Similar returns up to n songs similar to the seed videos, none of them
@@ -202,6 +204,8 @@ type Model struct {
 	// queue and analysed) before the queue is sorted again.
 	resortIDs   map[string]bool
 	confirmFrom mode // where the clear-queue popup returns to
+	autoplay    bool
+	autoplayPos int  // playlist position at the last low-queue radio lookup
 	radioBusy   bool // a similar-songs lookup is running
 
 	// DJ popup. Everything about tempo beyond the playing song's own BPM line
@@ -283,6 +287,7 @@ func New(d Deps) Model {
 		covers: map[string]string{}, themes: map[string]theme{}, coverAsked: map[string]bool{},
 		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{}, fullAsked: map[string]bool{}, volume: 100,
 		statsDelay: statsDelay, previewDelay: previewDelay,
+		autoplay: d.Autoplay, autoplayPos: -1,
 	}
 }
 
@@ -550,6 +555,11 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 	queued := m.startQueuedAnalyses()
 	m, sorted := m.maybeResort()
 	queued = tea.Batch(queued, sorted)
+	if ev.Name == "property-change" && ev.Property == "playlist-pos" {
+		var refill tea.Cmd
+		m, refill = m.maybeAutoplay()
+		queued = tea.Batch(queued, refill)
+	}
 	if cur := m.currentID(); cur != prev {
 		m.elapsed, m.total = 0, 0
 		m.undo = nil
@@ -901,6 +911,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.commandAllowed() && !msg.Paste {
 		if k == keyCommand {
 			return m.openCommandLine()
+		}
+		if k == keyAutoplay {
+			return m.toggleAutoplay()
 		}
 		if c := m.commandShortcut(k); c != nil {
 			if c.name == "load" {
@@ -1707,7 +1720,7 @@ func radioSeeds(pl []playlistEntry, pos int) []string {
 	return seeds
 }
 
-func (m Model) startRadio(n int) (Model, tea.Cmd) {
+func (m Model) startRadio(n int, automatic bool) (Model, tea.Cmd) {
 	if m.deps.Similar == nil || m.radioBusy {
 		return m, nil
 	}
@@ -1721,18 +1734,24 @@ func (m Model) startRadio(n int) (Model, tea.Cmd) {
 		exclude[yt.KeyOf(e.Filename)] = true
 	}
 	m.radioBusy = true
+	if m.autoplay && len(m.upcoming()) <= autoplayThreshold {
+		m.autoplayPos = m.pos
+	}
 	m.setStickyStatus("Finding similar songs…")
 	similar := m.deps.Similar
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		res, err := similar(ctx, seeds, exclude, n)
-		return radioDoneMsg{results: res, err: err}
+		return radioDoneMsg{results: res, err: err, automatic: automatic}
 	}
 }
 
 func (m Model) handleRadioDone(msg radioDoneMsg) (Model, tea.Cmd) {
 	m.radioBusy = false
+	if msg.automatic && !m.autoplay {
+		return m, nil
+	}
 	switch {
 	case msg.err != nil:
 		return m, m.setStatus("Radio failed: "+msg.err.Error(), true)

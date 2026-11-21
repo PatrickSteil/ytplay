@@ -1005,6 +1005,7 @@ func (m Model) helpRows() []string {
 		"",
 		bold.Render("Keys"),
 		key("?", "open or close this help"),
+		key("A", "toggle autoplay (radio at three or fewer upcoming songs)"),
 		key("/", "search bar (Enter runs it, Esc closes it)"),
 		key("j / k", "move in the results, the queue and the DJ popup"),
 		key("↑ / ↓", "move in the results and the DJ popup"),

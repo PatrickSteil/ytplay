@@ -419,7 +419,7 @@ func cmdRadio(m Model, arg string) (Model, tea.Cmd) {
 			return m, status
 		}
 	}
-	return m.startRadio(n)
+	return m.startRadio(n, false)
 }
 
 func cmdClear(m Model, _ string) (Model, tea.Cmd) { return m.askClear() }
