@@ -23,6 +23,7 @@ func StreamURL(ctx context.Context, ytdlpPath, songURL string) (stream, contentT
 	defer cancel()
 	cmd := exec.CommandContext(ctx, ytdlpPath,
 		"-f", "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best", "--no-playlist", "--no-warnings", "--ignore-config",
+		"--check-formats",
 		"--print", "%(url)s", "--print", "%(ext)s", "--print", "%(protocol)s", songURL)
 	cmd.WaitDelay = 2 * time.Second
 	var stdout, stderr bytes.Buffer

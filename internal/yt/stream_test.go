@@ -23,7 +23,7 @@ func TestStreamURLGivesTheDirectAddressAndItsType(t *testing.T) {
 			t.Errorf("%s/%s: %q %q %v, want type %q", c.ext, c.protocol, url, typ, err, c.wantType)
 		}
 		args, _ := os.ReadFile(argsFile)
-		for _, want := range []string{"--no-playlist", "https://www.youtube.com/watch?v=abc", "bestaudio"} {
+		for _, want := range []string{"--no-playlist", "--check-formats", "https://www.youtube.com/watch?v=abc", "bestaudio"} {
 			if !strings.Contains(string(args), want) {
 				t.Errorf("yt-dlp args lack %q:\n%s", want, args)
 			}

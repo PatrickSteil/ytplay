@@ -277,6 +277,8 @@ func Start(ctx context.Context, ytdlpPath, name string, extra ...string) (*Clien
 	args := []string{
 		"--idle=yes", "--no-video", "--no-terminal", "--force-window=no",
 		"--ytdl-format=bestaudio/best",
+		// Let yt-dlp fall back when the preferred stream URL returns an HTTP error.
+		"--ytdl-raw-options-append=check-formats=",
 		"--script-opts=ytdl_hook-ytdl_path=" + ytdlpPath,
 		"--input-ipc-server=" + sock,
 	}
