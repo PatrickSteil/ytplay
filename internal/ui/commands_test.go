@@ -55,7 +55,7 @@ func TestCommandNamesShortFormsAndPrefixes(t *testing.T) {
 		"clear": "clear", "help": "help", "quit": "quit",
 		// short forms
 		"f": "find", "s": "skip", "x": "delete", "d": "download", "a": "auto", "b": "sort",
-		"e": "bpm", "r": "radio", "X": "clear", "h": "help", "q": "quit",
+		"e": "bpm", "r": "radio", "X": "clear", "h": "help", "?": "help", "q": "quit",
 		// unique prefixes
 		"fin": "find", "ad": "add", "sk": "skip", "de": "delete", "do": "download", "down": "download",
 		"au": "auto", "so": "sort", "bp": "bpm", "ra": "radio", "cl": "clear", "he": "help", "qu": "quit",
@@ -524,59 +524,41 @@ func TestOnlyThePopupsCommandsRunWhileItIsOpen(t *testing.T) {
 	}
 }
 
-// ---- the old letters ----
-
-// deadLetters are the keys that used to do something and are commands now.
-var deadLetters = []string{"s", "d", "q", "r", "h", "D", "X", "Q", "b", "e", "a", "y", "n", "p", "v", "m", "l"}
-
-func TestOldLettersDoNothingOutsideTheCommandLine(t *testing.T) {
-	states := map[string]func(t *testing.T) Model{
-		"normal":  func(t *testing.T) Model { return downloadModel(queueModel(t, 4)) },
-		"results": func(t *testing.T) Model { return downloadModel(withResults(t, 3)) },
-		"queue": func(t *testing.T) Model {
-			m, _ := send(downloadModel(queueModel(t, 4)), "tab")
-			return m
-		},
-		"dj": func(t *testing.T) Model { return djModel(t, 4, nil) },
-	}
-	for name, build := range states {
-		for _, letter := range deadLetters {
-			m := build(t)
-			m.deps.Similar = func(ctx context.Context, seeds []string, exclude map[string]bool, n int) ([]yt.Result, error) {
-				t.Errorf("%s: %q looked for similar songs", name, letter)
-				return nil, nil
+func TestCommandShortcuts(t *testing.T) {
+	for _, base := range []Model{newTestModel(), withResults(t, 3), djModel(t, 4, nil)} {
+		for _, k := range []string{"?", "h"} {
+			m, _ := send(base, k)
+			if m.mode != modeHelp {
+				t.Fatalf("%q in mode %v opened mode %v, want help", k, base.mode, m.mode)
 			}
-			rec := &autoRecorder{}
-			m.deps.SetAutoDJ = rec.set
-			calls, ids := len(actionsOf(m).calls), queueIDs(m)
-			next, cmd := send(m, letter)
-			for _, msg := range collect(cmd) { // the commands it started run, and none may be a quit
-				if _, quit := msg.(tea.QuitMsg); quit {
-					t.Errorf("%s: %q quit the program", name, letter)
-				}
-			}
-			switch {
-			case next.mode != m.mode:
-				t.Errorf("%s: %q changed the mode from %v to %v", name, letter, m.mode, next.mode)
-			case len(actionsOf(next).calls) != calls:
-				t.Errorf("%s: %q made player calls %q", name, letter, actionsOf(next).calls[calls:])
-			case queueIDs(next) != ids:
-				t.Errorf("%s: %q changed the queue from %s to %s", name, letter, ids, queueIDs(next))
-			case next.status != m.status:
-				t.Errorf("%s: %q changed the status to %q", name, letter, next.status)
-			case next.autoDJ != m.autoDJ:
-				t.Errorf("%s: %q switched autodj", name, letter)
-			case len(next.bpmSet) != len(m.bpmSet):
-				t.Errorf("%s: %q set a BPM", name, letter)
-			}
-			if _, called := rec.last(); called {
-				t.Errorf("%s: %q told the player about autodj", name, letter)
+			m, _ = send(m, "?")
+			if m.mode != base.mode {
+				t.Errorf("? closed help into mode %v, want %v", m.mode, base.mode)
 			}
 		}
+		if _, cmd := send(base, "q"); !isQuit(cmd) {
+			t.Errorf("q in mode %v did not quit", base.mode)
+		}
+	}
+
+	m, _ := send(newTestModel(), "l")
+	if m.mode != modeCommand || m.cmdInput.Value() != "load " {
+		t.Errorf("l opened mode %v with input %q, want a prefilled load command", m.mode, m.cmdInput.Value())
+	}
+
+	m, _ = send(newTestModel(), "f", "q", "?")
+	if m.mode != modeSearch || m.input.Value() != "q?" {
+		t.Errorf("f q ? left mode %v with search input %q, want search input q?", m.mode, m.input.Value())
+	}
+
+	dj := djModel(t, 4, nil)
+	m, cmd := send(dj, "f", "l", "X")
+	if m.mode != dj.mode || m.status != dj.status || cmd != nil {
+		t.Error("unavailable shortcuts should leave the DJ popup alone")
 	}
 }
 
-func TestOnlyEscAndEnterCloseTheHelp(t *testing.T) {
+func TestOtherShortcutsLeaveHelpOpen(t *testing.T) {
 	for _, letter := range []string{"h", "q", "Q"} {
 		m, _ := typeCommand(newTestModel(), "help")
 		m, cmd := send(m, letter)

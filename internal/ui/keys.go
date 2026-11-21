@@ -1,10 +1,11 @@
 package ui
 
-// The keys that need no colon. Everything else is a command (see commands.go).
+// Fixed keys. Command aliases also work as shortcuts (see commands.go).
 // The values are Bubble Tea key strings (tea.KeyMsg.String()).
 const (
 	keySearch  = "/" // the search bar, as ":find" without a name
 	keyCommand = ":" // the command line
+	keyHelp    = "?" // toggle the help popup
 	keyEnter   = "enter"
 	keyEsc     = "esc"
 	keyPause   = " "

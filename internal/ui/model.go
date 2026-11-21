@@ -884,7 +884,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeHelp {
 		maxOff := max(len(m.helpRows())-m.helpWindow(), 0)
 		switch k {
-		case keyEsc, keyEnter:
+		case keyEsc, keyEnter, keyHelp:
 			m.mode = m.helpFrom
 			m.clampQueue()
 		case keyDown, keyShiftDown:
@@ -897,8 +897,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeCommand {
 		return m.handleCommandKey(msg)
 	}
-	if k == keyCommand && m.commandAllowed() {
-		return m.openCommandLine()
+	if m.commandAllowed() && !msg.Paste {
+		if k == keyCommand {
+			return m.openCommandLine()
+		}
+		if c := m.commandShortcut(k); c != nil {
+			if c.name == "load" {
+				next, focus := m.openCommandLine()
+				next.cmdInput.SetValue(c.name + " ")
+				next.cmdInput.CursorEnd()
+				return next, focus
+			}
+			return c.run(m, "")
+		}
 	}
 	if m.mode == modeDJ {
 		return m.handleDJKey(msg)
@@ -1099,8 +1110,6 @@ func (m Model) handleGlobalKey(k string) (tea.Model, tea.Cmd) {
 		return m.openSearch()
 	case keyLeft, keyRight:
 		return m.seekKey(k)
-	case keyUndo:
-		return m.undoQueue()
 	case keyVolUp:
 		return m.changeVolume(volStep)
 	case keyVolDown:
@@ -1450,8 +1459,6 @@ func (m Model) handleDJKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyUp, keyShiftUp:
 		m.djCursor = max(m.djCursor-1, 0)
 		m.scrollDJ()
-	case keyUndo:
-		return m.undoQueue()
 	case keyVolUp:
 		return m.changeVolume(volStep)
 	case keyVolDown:

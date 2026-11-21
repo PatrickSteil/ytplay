@@ -15,9 +15,8 @@ import (
 )
 
 // A vim-style command line: ":" opens it, a command is typed as a name (or its
-// short form) and arguments, Enter runs it, Esc cancels. Everything that used to
-// have its own letter is a command now; the keys that remain are the ones for
-// moving about (j k Tab Enter Esc x Space 0-9 =).
+// short form) and arguments, Enter runs it, Esc cancels. Short forms also
+// work as direct keys in the modes that accept commands.
 
 // command is one colon command.
 type command struct {
@@ -46,7 +45,7 @@ var commands = []command{
 	{name: "vol", short: []string{"v"}, run: cmdVol, inPopup: true, usage: ":vol N", about: "volume 0-100, or +N / -N (also the keys + -)"},
 	{name: "mute", short: []string{"m"}, run: cmdMute, inPopup: true, usage: ":mute", about: "mute or unmute"},
 	{name: "delete", short: []string{"x"}, run: cmdDelete, usage: ":delete", about: "remove the highlighted queue entry (or x)"},
-	{name: "undo", short: []string{"u"}, run: cmdUndo, inPopup: true, usage: ":undo", about: "undo the last queue change (also the key u)"},
+	{name: "undo", short: []string{keyUndo}, run: cmdUndo, inPopup: true, usage: ":undo", about: "undo the last queue change (also the key u)"},
 	{name: "shuffle", run: cmdShuffle, inPopup: true, usage: ":shuffle", about: "shuffle the queue"},
 	{name: "download", short: []string{"d"}, run: cmdDownload, usage: ":download", about: "save the highlighted song to a file"},
 	{name: "comments", short: []string{"c"}, run: cmdComments, usage: ":comments", about: "the next comments of this song (loads more when used up)"},
@@ -56,7 +55,7 @@ var commands = []command{
 	{name: "dj", run: cmdDJ, inPopup: true, usage: ":dj", about: "the DJ popup: the queue with its BPM"},
 	{name: "sort", short: []string{"b"}, run: cmdSort, inPopup: true, usage: ":sort [build|down]", about: "DJ popup: arrange the queue to flow from the playing song by tempo, key and energy; build or down shapes the energy"},
 	{name: "bpm", short: []string{"e"}, run: cmdBPM, inPopup: true, usage: ":bpm N", about: "DJ popup: set a song's BPM (alone: the detected one)"},
-	{name: "help", short: []string{"h"}, run: cmdHelp, inPopup: true, usage: ":help", about: "this help"},
+	{name: "help", short: []string{"h", keyHelp}, run: cmdHelp, inPopup: true, usage: ":help", about: "this help"},
 	{name: "quit", short: []string{"q"}, run: cmdQuit, inPopup: true, usage: ":quit", about: "quit (Ctrl+C too)"},
 }
 
@@ -204,6 +203,17 @@ func (m Model) handleCommandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.cmdInput, cmd = m.cmdInput.Update(msg)
 	return m, cmd
+}
+
+// commandShortcut matches explicit aliases, without expanding command prefixes.
+func (m Model) commandShortcut(key string) *command {
+	for i := range commands {
+		c := &commands[i]
+		if slices.Contains(c.short, key) && (m.mode != modeDJ || c.inPopup) {
+			return c
+		}
+	}
+	return nil
 }
 
 // runCommandLine runs a typed command. The model is already back in the state

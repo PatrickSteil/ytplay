@@ -138,11 +138,11 @@ func (m Model) help() string {
 		if queued {
 			h = append(h, "⇥ queue")
 		}
-		h = append(h, ": command", ":help")
+		h = append(h, ": command", "? help")
 	case modeQueue:
-		h = []string{"j/k select", "⏎ play", "↑/↓ move", "x remove", "u undo", "⇥/esc back", ": command"}
+		h = []string{"j/k select", "⏎ play", "↑/↓ move", "x remove", "u undo", "⇥/esc back", ": command", "? help"}
 	case modeDJ:
-		h = []string{"j/k select", ":sort", ":bpm N", ":auto", "u undo", "esc close", ": command"}
+		h = []string{"j/k select", ":sort", ":bpm N", ":auto", "u undo", "esc close", ": command", "? help"}
 	case modeHelp:
 		if len(m.helpRows()) > m.helpWindow() {
 			h = append(h, "j/k scroll")
@@ -160,7 +160,7 @@ func (m Model) help() string {
 		if playing {
 			h = append(h, "␣ pause", "←/→ seek")
 		}
-		h = append(h, "+/- volume", ":help")
+		h = append(h, "+/- volume", "? help")
 	}
 	return strings.Join(h, "  ")
 }
@@ -999,6 +999,7 @@ func (m Model) helpRows() []string {
 		dim.Render("audio, yt-dlp searches and downloads."),
 		"",
 		bold.Render("Keys"),
+		key("?", "open or close this help"),
 		key("/", "search bar (Enter runs it, Esc closes it)"),
 		key("j / k", "move in the results, the queue and the DJ popup"),
 		key("Enter", "play the highlighted result or queue entry now"),
@@ -1016,14 +1017,14 @@ func (m Model) helpRows() []string {
 		key(":", "the command line: Enter runs it, Esc cancels,"),
 		key("", "Up/Down earlier commands, Tab completes a name"),
 		"",
-		bold.Render("Commands") + dim.Render("  (a short form, or the start of the name, works too)"),
+		bold.Render("Commands") + dim.Render("  (listed shortcuts work as keys)"),
 	}
 	for _, c := range commands {
 		label := c.usage
 		if len(c.short) > 0 {
-			label += "  :" + c.short[0]
+			label += "  " + strings.Join(c.short, "/")
 		}
-		rows = append(rows, th.accentB.Render(fmt.Sprintf("%-17s", label))+c.about)
+		rows = append(rows, th.accentB.Render(fmt.Sprintf("%-23s", label))+c.about)
 	}
 	return rows
 }
