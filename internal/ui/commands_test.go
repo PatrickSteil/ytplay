@@ -257,7 +257,7 @@ func TestUnknownCommand(t *testing.T) {
 // ---- the commands ----
 
 func TestSkipAndQuitCommands(t *testing.T) {
-	for _, word := range []string{"skip", "s", "sk"} {
+	for _, word := range []string{"skip", "s", "n", "sk"} {
 		m, cmd := typeCommand(queueModel(t, 2), word)
 		m = run(m, cmd)
 		if got := actionsOf(m).calls; len(got) != 1 || got[0] != "skip" {
@@ -525,6 +525,13 @@ func TestOnlyThePopupsCommandsRunWhileItIsOpen(t *testing.T) {
 }
 
 func TestCommandShortcuts(t *testing.T) {
+	for _, k := range []string{"s", "n"} {
+		m, cmd := send(queueModel(t, 2), k)
+		if got := actionsOf(run(m, cmd)).calls; len(got) != 1 || got[0] != "skip" {
+			t.Errorf("%q: calls = %q, want one skip", k, got)
+		}
+	}
+
 	for _, base := range []Model{newTestModel(), withResults(t, 3), djModel(t, 4, nil)} {
 		for _, k := range []string{"?", "h"} {
 			m, _ := send(base, k)

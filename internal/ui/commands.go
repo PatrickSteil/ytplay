@@ -39,7 +39,7 @@ var commands = []command{
 	{name: "yank", short: []string{"y"}, run: cmdYank, inPopup: true, usage: ":yank", about: "copy the link of the highlighted (or playing) song"},
 	{name: "cast", short: []string{"C"}, run: cmdCast, inPopup: true, usage: ":cast [NAME|off]", about: "choose a speaker; NAME connects directly, off plays here again"},
 	{name: "play", run: cmdPlay, usage: ":play", about: "play the highlighted song now (Enter does too)"},
-	{name: "skip", short: []string{"s"}, run: cmdSkip, usage: ":skip", about: "skip to the next song"},
+	{name: "skip", short: []string{"s", "n"}, run: cmdSkip, usage: ":skip", about: "skip to the next song"},
 	{name: "prev", short: []string{"p"}, run: cmdPrev, usage: ":prev", about: "the song before (or the start of this one)"},
 	{name: "seek", run: cmdSeek, usage: ":seek TIME", about: "to 1:30, 90 (seconds), 50%, or by +10 / -30 (also \u2190 \u2192)"},
 	{name: "vol", short: []string{"v"}, run: cmdVol, inPopup: true, usage: ":vol N", about: "volume 0-100, or +N / -N (also the keys + -)"},

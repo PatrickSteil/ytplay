@@ -63,7 +63,7 @@ the queue after Tab.
 | `:yank` | `y` | copy the link of the highlighted result, queue entry or DJ popup row (the playing song if nothing is highlighted) to the clipboard: with `wl-copy`, `xclip`, `xsel` or `pbcopy` if installed, else through the terminal (OSC 52) |
 | `:cast [NAME\|off]` | `C` | play on a speaker in the same network (Chromecast, Google Home, Nest): without a name it opens the speaker picker. Use `↑`/`↓` or `j`/`k` to select, Enter to confirm, and Esc to close. Choose **Play here** or type `:cast off` to return to local playback. Give `:cast` a speaker name or part of it to connect directly. Playback continues from the current position. The speaker fetches the audio itself, so this needs no extra software; volume, pause and seek go to the speaker |
 | `:play` | | play the highlighted result or queue entry now (Enter does the same) |
-| `:skip` | `s` | skip |
+| `:skip` | `s`, `n` | skip |
 | `:prev` | `p` | the song before; if this one has played for more than 3 s, its start |
 | `:seek TIME` | | jump to `1:30`, `1:02:03` or `90` (seconds), to `50%`, or by `+10` / `-30` seconds |
 | `:vol N` | `v` | volume 0 to 100, or `+N` / `-N`; alone it says the volume. A master volume: the crossfades of autodj are scaled by it. Not kept between runs |
