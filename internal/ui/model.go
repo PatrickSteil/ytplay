@@ -35,6 +35,7 @@ const (
 	modeDownload             // "save to file" popup
 	modeHelp                 // help popup
 	modeDJ                   // DJ popup: queue tempo, sort by BPM, set a BPM
+	modeCast                 // speaker picker
 	modeCommand              // the command line (":") is open
 )
 
@@ -211,15 +212,19 @@ type Model struct {
 	djOff    int  // first visible row
 	// The command line: where it was opened from (and goes back to), what was run
 	// before in this session, and where in that history Up and Down are.
-	cmdInput   textinput.Model
-	cmdFrom    mode
-	cmdHistory []string
-	cmdHistPos int
-	cmdDraft   string
-	helpOff    int    // how far the help popup is scrolled
-	loadBusy   bool   // a link is being loaded
-	castName   string // the speaker being played on, "" when playing here
-	castBusy   bool   // looking for speakers or connecting to one
+	cmdInput    textinput.Model
+	cmdFrom     mode
+	cmdHistory  []string
+	cmdHistPos  int
+	cmdDraft    string
+	helpOff     int    // how far the help popup is scrolled
+	loadBusy    bool   // a link is being loaded
+	castName    string // the speaker being played on, "" when playing here
+	castBusy    bool   // looking for speakers or connecting to one
+	castFrom    mode
+	castTargets []castTarget
+	castCursor  int
+	castNotice  string
 	// undo are the upcoming queues before the last edits, newest last; they are
 	// forgotten when the song changes (what is "upcoming" is then another list).
 	undo []undoEntry
@@ -444,14 +449,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleRetryAnalysis(msg)
 
 	case castListMsg:
-		m.castBusy = false
-		switch {
-		case msg.err != nil:
-			return m, m.setStatus("Could not look for speakers: "+msg.err.Error(), true)
-		case len(msg.names) == 0:
-			return m, m.setStatus("No speakers found on the network", true)
-		}
-		return m, m.setStatus("Speakers: "+strings.Join(msg.names, ", ")+" (:cast NAME plays there, :cast off comes back)", false)
+		return m.finishCastLookup(msg), nil
 
 	case castDoneMsg:
 		m.castBusy = false
@@ -880,6 +878,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.mode == modeConfirm {
 		return m.handleConfirmKey(k)
+	}
+	if m.mode == modeCast {
+		return m.handleCastKey(k)
 	}
 	if m.mode == modeHelp {
 		maxOff := max(len(m.helpRows())-m.helpWindow(), 0)

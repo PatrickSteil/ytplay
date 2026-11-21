@@ -37,7 +37,7 @@ var commands = []command{
 	{name: "add", run: cmdAdd, usage: ":add", about: "add the highlighted result to the queue"},
 	{name: "load", short: []string{"l"}, run: cmdLoad, usage: ":load LINK", about: "add a YouTube or SoundCloud playlist, set or song link to the queue"},
 	{name: "yank", short: []string{"y"}, run: cmdYank, inPopup: true, usage: ":yank", about: "copy the link of the highlighted (or playing) song"},
-	{name: "cast", run: cmdCast, usage: ":cast [NAME|off]", about: "play on a speaker (Chromecast, Google Home); without a name: list them; off: play here again"},
+	{name: "cast", short: []string{"C"}, run: cmdCast, inPopup: true, usage: ":cast [NAME|off]", about: "choose a speaker; NAME connects directly, off plays here again"},
 	{name: "play", run: cmdPlay, usage: ":play", about: "play the highlighted song now (Enter does too)"},
 	{name: "skip", short: []string{"s"}, run: cmdSkip, usage: ":skip", about: "skip to the next song"},
 	{name: "prev", short: []string{"p"}, run: cmdPrev, usage: ":prev", about: "the song before (or the start of this one)"},
@@ -319,7 +319,7 @@ func cmdYank(m Model, _ string) (Model, tea.Cmd) {
 	return m, func() tea.Msg { return yankDoneMsg{title: title, err: copyText(link)} }
 }
 
-// cmdCast lists the speakers, plays on one, or goes back to playing here.
+// cmdCast opens the speaker picker, connects by name, or returns to local playback.
 func cmdCast(m Model, arg string) (Model, tea.Cmd) {
 	say := func(text string, isErr bool) (Model, tea.Cmd) {
 		status := m.setStatus(text, isErr)
@@ -331,22 +331,23 @@ func cmdCast(m Model, arg string) (Model, tea.Cmd) {
 	case m.castBusy:
 		return say("Still looking for the speaker…", false)
 	}
-	ctx := m.queueCtx
 	switch arg = strings.TrimSpace(arg); arg {
 	case "":
-		m.castBusy = true
-		m.setStickyStatus("Looking for speakers…")
-		devices := m.deps.Devices
-		return m, func() tea.Msg {
-			names, err := devices(ctx)
-			return castListMsg{names: names, err: err}
-		}
+		return m.openCastPicker()
 	case "off":
-		m.castBusy = true
+		return m.connectCast("", true)
+	default:
+		return m.connectCast(arg, false)
+	}
+}
+
+func (m Model) connectCast(arg string, local bool) (Model, tea.Cmd) {
+	ctx := m.queueCtx
+	m.castBusy = true
+	if local {
 		off := m.deps.CastOff
 		return m, func() tea.Msg { return castDoneMsg{off: true, err: off(ctx)} }
 	}
-	m.castBusy = true
 	m.setStickyStatus("Connecting to " + arg + "…")
 	cast := m.deps.Cast
 	return m, func() tea.Msg {

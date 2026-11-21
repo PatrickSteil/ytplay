@@ -150,6 +150,11 @@ func (m Model) help() string {
 		h = append(h, "esc close")
 	case modeConfirm:
 		h = []string{"y yes", "n no", "esc cancel"}
+	case modeCast:
+		h = []string{"esc close"}
+		if len(m.castTargets) > 0 {
+			h = []string{"↑/↓ select", "⏎ cast", "esc close"}
+		}
 	case modeDownload:
 		h = []string{"⏎ save", "⇥ complete", "esc cancel"}
 	default:
@@ -419,7 +424,7 @@ func (m Model) View() string {
 		v = m.viewStacked()
 	}
 	switch m.popupMode() {
-	case modeConfirm, modeDownload, modeHelp, modeDJ:
+	case modeConfirm, modeDownload, modeHelp, modeDJ, modeCast:
 		v = m.withPopup(v)
 	}
 	return v
@@ -1061,6 +1066,8 @@ func (m Model) withPopup(view string) string {
 		box = m.helpBox()
 	case modeDJ:
 		box = m.djBox()
+	case modeCast:
+		box = m.castBox()
 	}
 	left := max((m.width-lipgloss.Width(box[0]))/2, 0)
 	top := max((m.height-len(box))/2, 0)
