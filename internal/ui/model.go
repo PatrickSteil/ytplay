@@ -35,6 +35,7 @@ const (
 	modeDownload             // "save to file" popup
 	modeHelp                 // help popup
 	modeDJ                   // DJ popup: queue tempo, sort by BPM, set a BPM
+	modeCast                 // speaker picker
 	modeCommand              // the command line (":") is open
 )
 
@@ -73,8 +74,10 @@ type Actions interface {
 type Deps struct {
 	// Search looks up a name; failed names a source that could not be searched
 	// while the other's results are returned.
-	Search func(ctx context.Context, query string) (results []yt.Result, failed map[yt.Source]error, err error)
-	Player Actions
+	Search       func(ctx context.Context, query string) (results []yt.Result, failed map[yt.Source]error, err error)
+	Player       Actions
+	Autoplay     bool
+	SaveAutoplay func(bool) error
 	// Position reads time-pos and duration; it errors while nothing is loaded.
 	Position func(ctx context.Context) (elapsed, total float64, err error)
 	// Similar returns up to n songs similar to the seed videos, none of them
@@ -201,6 +204,8 @@ type Model struct {
 	// queue and analysed) before the queue is sorted again.
 	resortIDs   map[string]bool
 	confirmFrom mode // where the clear-queue popup returns to
+	autoplay    bool
+	autoplayPos int  // playlist position at the last low-queue radio lookup
 	radioBusy   bool // a similar-songs lookup is running
 
 	// DJ popup. Everything about tempo beyond the playing song's own BPM line
@@ -211,15 +216,19 @@ type Model struct {
 	djOff    int  // first visible row
 	// The command line: where it was opened from (and goes back to), what was run
 	// before in this session, and where in that history Up and Down are.
-	cmdInput   textinput.Model
-	cmdFrom    mode
-	cmdHistory []string
-	cmdHistPos int
-	cmdDraft   string
-	helpOff    int    // how far the help popup is scrolled
-	loadBusy   bool   // a link is being loaded
-	castName   string // the speaker being played on, "" when playing here
-	castBusy   bool   // looking for speakers or connecting to one
+	cmdInput    textinput.Model
+	cmdFrom     mode
+	cmdHistory  []string
+	cmdHistPos  int
+	cmdDraft    string
+	helpOff     int    // how far the help popup is scrolled
+	loadBusy    bool   // a link is being loaded
+	castName    string // the speaker being played on, "" when playing here
+	castBusy    bool   // looking for speakers or connecting to one
+	castFrom    mode
+	castTargets []castTarget
+	castCursor  int
+	castNotice  string
 	// undo are the upcoming queues before the last edits, newest last; they are
 	// forgotten when the song changes (what is "upcoming" is then another list).
 	undo []undoEntry
@@ -278,6 +287,7 @@ func New(d Deps) Model {
 		covers: map[string]string{}, themes: map[string]theme{}, coverAsked: map[string]bool{},
 		stats: map[string]trackStats{}, infoAsked: map[string]bool{}, analysisAsked: map[string]bool{}, fullAsked: map[string]bool{}, volume: 100,
 		statsDelay: statsDelay, previewDelay: previewDelay,
+		autoplay: d.Autoplay, autoplayPos: -1,
 	}
 }
 
@@ -444,14 +454,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleRetryAnalysis(msg)
 
 	case castListMsg:
-		m.castBusy = false
-		switch {
-		case msg.err != nil:
-			return m, m.setStatus("Could not look for speakers: "+msg.err.Error(), true)
-		case len(msg.names) == 0:
-			return m, m.setStatus("No speakers found on the network", true)
-		}
-		return m, m.setStatus("Speakers: "+strings.Join(msg.names, ", ")+" (:cast NAME plays there, :cast off comes back)", false)
+		return m.finishCastLookup(msg), nil
 
 	case castDoneMsg:
 		m.castBusy = false
@@ -552,6 +555,11 @@ func (m Model) handleMpvEvent(ev mpv.Event) (Model, tea.Cmd) {
 	queued := m.startQueuedAnalyses()
 	m, sorted := m.maybeResort()
 	queued = tea.Batch(queued, sorted)
+	if ev.Name == "property-change" && ev.Property == "playlist-pos" {
+		var refill tea.Cmd
+		m, refill = m.maybeAutoplay()
+		queued = tea.Batch(queued, refill)
+	}
 	if cur := m.currentID(); cur != prev {
 		m.elapsed, m.total = 0, 0
 		m.undo = nil
@@ -881,10 +889,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeConfirm {
 		return m.handleConfirmKey(k)
 	}
+	if m.mode == modeCast {
+		return m.handleCastKey(k)
+	}
 	if m.mode == modeHelp {
 		maxOff := max(len(m.helpRows())-m.helpWindow(), 0)
 		switch k {
-		case keyEsc, keyEnter:
+		case keyEsc, keyEnter, keyHelp:
 			m.mode = m.helpFrom
 			m.clampQueue()
 		case keyDown, keyShiftDown:
@@ -897,8 +908,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeCommand {
 		return m.handleCommandKey(msg)
 	}
-	if k == keyCommand && m.commandAllowed() {
-		return m.openCommandLine()
+	if m.commandAllowed() && !msg.Paste {
+		if k == keyCommand {
+			return m.openCommandLine()
+		}
+		if k == keyAutoplay {
+			return m.toggleAutoplay()
+		}
+		if c := m.commandShortcut(k); c != nil {
+			if c.name == "load" {
+				next, focus := m.openCommandLine()
+				next.cmdInput.SetValue(c.name + " ")
+				next.cmdInput.CursorEnd()
+				return next, focus
+			}
+			return c.run(m, "")
+		}
 	}
 	if m.mode == modeDJ {
 		return m.handleDJKey(msg)
@@ -1024,13 +1049,13 @@ func (m Model) handleSearchDone(msg searchDoneMsg) (tea.Model, tea.Cmd) {
 // false when the key should fall through to the global keys.
 func (m Model) handleResultsKey(k string) (Model, tea.Cmd, bool) {
 	switch k {
-	case keyDown:
+	case keyDown, keyArrowDown:
 		if m.selected < len(m.results)-1 {
 			m.selected++
 		}
 		m.scrollIntoView()
 		return m, m.schedulePreview(), true
-	case keyUp:
+	case keyUp, keyArrowUp:
 		if m.selected > 0 {
 			m.selected--
 		}
@@ -1099,8 +1124,6 @@ func (m Model) handleGlobalKey(k string) (tea.Model, tea.Cmd) {
 		return m.openSearch()
 	case keyLeft, keyRight:
 		return m.seekKey(k)
-	case keyUndo:
-		return m.undoQueue()
 	case keyVolUp:
 		return m.changeVolume(volStep)
 	case keyVolDown:
@@ -1450,8 +1473,6 @@ func (m Model) handleDJKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyUp, keyShiftUp:
 		m.djCursor = max(m.djCursor-1, 0)
 		m.scrollDJ()
-	case keyUndo:
-		return m.undoQueue()
 	case keyVolUp:
 		return m.changeVolume(volStep)
 	case keyVolDown:
@@ -1699,7 +1720,7 @@ func radioSeeds(pl []playlistEntry, pos int) []string {
 	return seeds
 }
 
-func (m Model) startRadio(n int) (Model, tea.Cmd) {
+func (m Model) startRadio(n int, automatic bool) (Model, tea.Cmd) {
 	if m.deps.Similar == nil || m.radioBusy {
 		return m, nil
 	}
@@ -1713,18 +1734,24 @@ func (m Model) startRadio(n int) (Model, tea.Cmd) {
 		exclude[yt.KeyOf(e.Filename)] = true
 	}
 	m.radioBusy = true
+	if m.autoplay && len(m.upcoming()) <= autoplayThreshold {
+		m.autoplayPos = m.pos
+	}
 	m.setStickyStatus("Finding similar songs…")
 	similar := m.deps.Similar
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		res, err := similar(ctx, seeds, exclude, n)
-		return radioDoneMsg{results: res, err: err}
+		return radioDoneMsg{results: res, err: err, automatic: automatic}
 	}
 }
 
 func (m Model) handleRadioDone(msg radioDoneMsg) (Model, tea.Cmd) {
 	m.radioBusy = false
+	if msg.automatic && !m.autoplay {
+		return m, nil
+	}
 	switch {
 	case msg.err != nil:
 		return m, m.setStatus("Radio failed: "+msg.err.Error(), true)

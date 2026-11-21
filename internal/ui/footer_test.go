@@ -78,7 +78,7 @@ func TestTheFooterNamesExactlyTheKeysThatWorkHere(t *testing.T) {
 			{": command", func(m Model) Model { return press(m, ":") }},
 			{"/ search", func(m Model) Model { return press(m, "/") }},
 			{"+/- volume", func(m Model) Model { return press(m, "+") }},
-			{":help", func(m Model) Model { return do(m, "help") }},
+			{"? help", func(m Model) Model { return press(m, "?") }},
 		}},
 		{"playing, nothing queued", func() Model { return queueModel(t, 1) }, []probe{
 			{": command", func(m Model) Model { return press(m, ":") }},
@@ -86,7 +86,7 @@ func TestTheFooterNamesExactlyTheKeysThatWorkHere(t *testing.T) {
 			{"␣ pause", func(m Model) Model { return press(m, " ") }},
 			{"←/→ seek", func(m Model) Model { return press(m, "left") }},
 			{"+/- volume", func(m Model) Model { return press(m, "+") }},
-			{":help", func(m Model) Model { return do(m, "help") }},
+			{"? help", func(m Model) Model { return press(m, "?") }},
 		}},
 		{"playing, something queued", func() Model { return queueModel(t, 3) }, []probe{
 			{": command", func(m Model) Model { return press(m, ":") }},
@@ -95,16 +95,16 @@ func TestTheFooterNamesExactlyTheKeysThatWorkHere(t *testing.T) {
 			{"␣ pause", func(m Model) Model { return press(m, " ") }},
 			{"←/→ seek", func(m Model) Model { return press(m, "right") }},
 			{"+/- volume", func(m Model) Model { return press(m, "-") }},
-			{":help", func(m Model) Model { return do(m, "help") }},
+			{"? help", func(m Model) Model { return press(m, "?") }},
 		}},
 		{"the results are focused", withResultsAndQueue, []probe{
-			{"j/k move", func(m Model) Model { return press(m, "j") }},
+			{"↑/↓ move", func(m Model) Model { return press(m, "down") }},
 			{"⏎ play", func(m Model) Model { return press(m, "enter") }},
 			{":add queue", func(m Model) Model { return do(m, "add") }},
 			{"/ search", func(m Model) Model { return press(m, "/") }},
 			{"⇥ queue", func(m Model) Model { return press(m, "tab") }},
 			{": command", func(m Model) Model { return press(m, ":") }},
-			{":help", func(m Model) Model { return do(m, "help") }},
+			{"? help", func(m Model) Model { return press(m, "?") }},
 		}},
 		{"the queue is focused", func() Model { m, _ := send(queueModel(t, 4), "tab"); return m }, []probe{
 			{"j/k select", func(m Model) Model { return press(m, "j") }},
@@ -114,6 +114,7 @@ func TestTheFooterNamesExactlyTheKeysThatWorkHere(t *testing.T) {
 			{"u undo", func(m Model) Model { return press(m, "u") }},
 			{"⇥/esc back", func(m Model) Model { return press(m, "tab") }},
 			{": command", func(m Model) Model { return press(m, ":") }},
+			{"? help", func(m Model) Model { return press(m, "?") }},
 		}},
 		{"the search bar is open", func() Model { m, _ := send(newTestModel(), "/", "d", "a", "f", "t"); return m }, []probe{
 			{"⏎ search", func(m Model) Model { return press(m, "enter") }},
@@ -127,6 +128,7 @@ func TestTheFooterNamesExactlyTheKeysThatWorkHere(t *testing.T) {
 			{"u undo", func(m Model) Model { return press(m, "u") }},
 			{"esc close", func(m Model) Model { return press(m, "esc") }},
 			{": command", func(m Model) Model { return press(m, ":") }},
+			{"? help", func(m Model) Model { return press(m, "?") }},
 		}},
 		{"the help is open", func() Model { return help(queueModel(t, 3)) }, []probe{
 			{"j/k scroll", func(m Model) Model { return press(m, "j") }},
@@ -178,7 +180,7 @@ func TestTheFooterNamesExactlyTheKeysThatWorkHere(t *testing.T) {
 func TestTheFooterIsShownOnTheStatusLine(t *testing.T) {
 	m := queueModel(t, 3)
 	m.width = 120
-	if got := statusText(m); !strings.Contains(got, "⇥ queue") || !strings.Contains(got, ":help") {
+	if got := statusText(m); !strings.Contains(got, "⇥ queue") || !strings.Contains(got, "? help") {
 		t.Errorf("status line = %q, want the hints of this state", got)
 	}
 }

@@ -134,15 +134,15 @@ func (m Model) help() string {
 	case modeSearch:
 		h = []string{"⏎ search", "esc close"}
 	case modeResults:
-		h = []string{"j/k move", "⏎ play", ":add queue", "/ search"}
+		h = []string{"↑/↓ move", "⏎ play", ":add queue", "/ search"}
 		if queued {
 			h = append(h, "⇥ queue")
 		}
-		h = append(h, ": command", ":help")
+		h = append(h, ": command", "? help")
 	case modeQueue:
-		h = []string{"j/k select", "⏎ play", "↑/↓ move", "x remove", "u undo", "⇥/esc back", ": command"}
+		h = []string{"j/k select", "⏎ play", "↑/↓ move", "x remove", "u undo", "⇥/esc back", ": command", "? help"}
 	case modeDJ:
-		h = []string{"j/k select", ":sort", ":bpm N", ":auto", "u undo", "esc close", ": command"}
+		h = []string{"j/k select", ":sort", ":bpm N", ":auto", "u undo", "esc close", ": command", "? help"}
 	case modeHelp:
 		if len(m.helpRows()) > m.helpWindow() {
 			h = append(h, "j/k scroll")
@@ -150,6 +150,11 @@ func (m Model) help() string {
 		h = append(h, "esc close")
 	case modeConfirm:
 		h = []string{"y yes", "n no", "esc cancel"}
+	case modeCast:
+		h = []string{"esc close"}
+		if len(m.castTargets) > 0 {
+			h = []string{"↑/↓ select", "⏎ cast", "esc close"}
+		}
 	case modeDownload:
 		h = []string{"⏎ save", "⇥ complete", "esc cancel"}
 	default:
@@ -160,7 +165,7 @@ func (m Model) help() string {
 		if playing {
 			h = append(h, "␣ pause", "←/→ seek")
 		}
-		h = append(h, "+/- volume", ":help")
+		h = append(h, "+/- volume", "? help")
 	}
 	return strings.Join(h, "  ")
 }
@@ -419,7 +424,7 @@ func (m Model) View() string {
 		v = m.viewStacked()
 	}
 	switch m.popupMode() {
-	case modeConfirm, modeDownload, modeHelp, modeDJ:
+	case modeConfirm, modeDownload, modeHelp, modeDJ, modeCast:
 		v = m.withPopup(v)
 	}
 	return v
@@ -999,8 +1004,11 @@ func (m Model) helpRows() []string {
 		dim.Render("audio, yt-dlp searches and downloads."),
 		"",
 		bold.Render("Keys"),
+		key("?", "open or close this help"),
+		key("A", "toggle autoplay (radio at three or fewer upcoming songs)"),
 		key("/", "search bar (Enter runs it, Esc closes it)"),
 		key("j / k", "move in the results, the queue and the DJ popup"),
+		key("↑ / ↓", "move in the results and the DJ popup"),
 		key("Enter", "play the highlighted result or queue entry now"),
 		key("Tab", "switch between the results and the queue"),
 		key("x", "remove the highlighted queue entry"),
@@ -1016,14 +1024,14 @@ func (m Model) helpRows() []string {
 		key(":", "the command line: Enter runs it, Esc cancels,"),
 		key("", "Up/Down earlier commands, Tab completes a name"),
 		"",
-		bold.Render("Commands") + dim.Render("  (a short form, or the start of the name, works too)"),
+		bold.Render("Commands") + dim.Render("  (listed shortcuts work as keys)"),
 	}
 	for _, c := range commands {
 		label := c.usage
 		if len(c.short) > 0 {
-			label += "  :" + c.short[0]
+			label += "  " + strings.Join(c.short, "/")
 		}
-		rows = append(rows, th.accentB.Render(fmt.Sprintf("%-17s", label))+c.about)
+		rows = append(rows, th.accentB.Render(fmt.Sprintf("%-23s", label))+c.about)
 	}
 	return rows
 }
@@ -1060,6 +1068,8 @@ func (m Model) withPopup(view string) string {
 		box = m.helpBox()
 	case modeDJ:
 		box = m.djBox()
+	case modeCast:
+		box = m.castBox()
 	}
 	left := max((m.width-lipgloss.Width(box[0]))/2, 0)
 	top := max((m.height-len(box))/2, 0)

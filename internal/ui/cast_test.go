@@ -36,20 +36,56 @@ func castEvent(name string) MpvEventMsg {
 	return MpvEventMsg{mpv.Event{Name: "cast", Reason: name, Data: json.RawMessage(`null`)}}
 }
 
-func TestCastWithoutANameListsTheSpeakers(t *testing.T) {
+func TestCastPickerSelectsASpeakerAndReturnsToTheQueue(t *testing.T) {
 	f := &castFakes{names: []string{"Kitchen speaker", "Wohnzimmer"}}
-	m := doCmd(f.deps(at(queueModel(t, 3), 140, 30)), "cast")
-	for _, want := range []string{"Kitchen speaker", "Wohnzimmer", ":cast"} {
-		if !strings.Contains(m.status, want) {
-			t.Errorf("status %q lacks %q", m.status, want)
+	m, _ := send(f.deps(at(queueModel(t, 3), 140, 30)), "tab")
+	m, discover := send(m, "C")
+	if m.mode != modeCast || !strings.Contains(m.View(), "Looking for speakers") {
+		t.Fatalf("C did not open a speaker picker in discovery mode")
+	}
+	m = run(m, discover)
+	for _, want := range f.names {
+		if !strings.Contains(m.View(), want) {
+			t.Errorf("picker lacks %q", want)
 		}
 	}
 	if len(f.cast) != 0 {
-		t.Error("it started casting")
+		t.Fatal("casting started before selection")
 	}
-	none := doCmd((&castFakes{}).deps(at(queueModel(t, 3), 140, 30)), "cast")
-	if !strings.Contains(none.status, "No speakers") {
-		t.Errorf("no speakers: %q", none.status)
+	m, connect := send(m, "down", "enter")
+	m = run(m, connect)
+	if m.mode != modeQueue || len(f.cast) != 1 || f.cast[0] != "Wohnzimmer" {
+		t.Errorf("mode %v, cast requests %v, want queue mode and Wohnzimmer", m.mode, f.cast)
+	}
+}
+
+func TestCastPickerWithoutSpeakers(t *testing.T) {
+	m := doCmd((&castFakes{}).deps(at(queueModel(t, 3), 140, 30)), "cast")
+	if m.mode != modeCast || !strings.Contains(m.View(), "No speakers found") {
+		t.Fatal("empty discovery did not show the empty picker")
+	}
+}
+
+func TestCastPickerKeepsPlaybackOnTheCurrentSpeaker(t *testing.T) {
+	f := &castFakes{names: []string{"Wohnzimmer"}}
+	m := f.deps(at(queueModel(t, 3), 140, 30))
+	m.castName = "Wohnzimmer"
+	m = doCmd(m, "cast")
+	m, cmd := send(m, "enter")
+	if m.mode != modeNormal || cmd != nil {
+		t.Error("selecting the current speaker should close the picker without reconnecting")
+	}
+}
+
+func TestCastPickerCanReturnToLocalPlayback(t *testing.T) {
+	f := &castFakes{listErr: errors.New("no multicast")}
+	m := f.deps(at(queueModel(t, 3), 140, 30))
+	m.castName = "Wohnzimmer"
+	m = doCmd(m, "cast")
+	m, off := send(m, "enter")
+	m = run(m, off)
+	if m.mode != modeNormal || f.off != 1 || len(f.cast) != 0 {
+		t.Errorf("mode %v, local playback calls %d, cast requests %v", m.mode, f.off, f.cast)
 	}
 }
 
@@ -81,8 +117,8 @@ func TestCastFailuresAreSaid(t *testing.T) {
 		t.Errorf("status %q (error %v)", m.status, m.statusIsErr)
 	}
 	m = doCmd((&castFakes{listErr: errors.New("no multicast")}).deps(at(queueModel(t, 3), 140, 30)), "cast")
-	if !m.statusIsErr || !strings.Contains(m.status, "no multicast") {
-		t.Errorf("status %q", m.status)
+	if m.mode != modeCast || !strings.Contains(m.View(), "no multicast") {
+		t.Error("discovery failure did not appear in the picker")
 	}
 	m = doCmd((&castFakes{offErr: errors.New("not casting")}).deps(at(queueModel(t, 3), 140, 30)), "cast off")
 	if !m.statusIsErr || !strings.Contains(m.status, "not casting") {
@@ -101,13 +137,14 @@ func TestOnlyOneCastLookupAtATime(t *testing.T) {
 	if !m.castBusy {
 		t.Fatal("not busy while looking")
 	}
-	again, cmd2 := typeCommand(m, "cast")
+	m, _ = send(m, "esc")
+	again, cmd2 := send(m, "C")
 	if cmd2 != nil && len(collect(cmd2)) != 0 || !strings.Contains(again.status, "Still") {
 		t.Errorf("a second :cast while looking: %q", again.status)
 	}
-	m = run(m, cmd)
-	if m.castBusy {
-		t.Error("still busy after the answer")
+	m = run(again, cmd)
+	if m.castBusy || m.mode != modeNormal {
+		t.Error("late discovery changed the mode or left casting busy")
 	}
 }
 

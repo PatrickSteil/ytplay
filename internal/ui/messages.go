@@ -79,8 +79,9 @@ type queueEditDoneMsg struct{ err error }
 
 // radioDoneMsg is the result of looking for songs similar to the queue.
 type radioDoneMsg struct {
-	results []yt.Result
-	err     error
+	results   []yt.Result
+	err       error
+	automatic bool
 }
 
 // infoMsg is the result of fetching description, stats and comments.

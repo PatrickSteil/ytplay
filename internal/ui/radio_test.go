@@ -208,3 +208,52 @@ func TestRadioCommandRefusesABadNumber(t *testing.T) {
 		}
 	}
 }
+
+func TestAutoplayRefillsAtThreeUpcomingSongs(t *testing.T) {
+	var calls []similarCall
+	m := radioModel(t, &calls, nil, nil)
+	m.autoplay = true
+	m, _ = update(m, plEvent(t, "*c", "u0", "u1", "u2", "u3"))
+	m, cmd := update(m, propEvent("playlist-pos", "0"))
+	if findMsg[radioDoneMsg](cmd) != nil {
+		t.Fatal("autoplay ran with four upcoming songs")
+	}
+
+	m, _ = update(m, plEvent(t, "c", "*u0", "u1", "u2", "u3"))
+	m, cmd = update(m, propEvent("playlist-pos", "1"))
+	done := findMsg[radioDoneMsg](cmd)
+	if done == nil || !done.automatic || len(calls) != 1 || calls[0].n != radioDefault {
+		t.Fatalf("autoplay result = %v, radio calls = %v", done, calls)
+	}
+	m, _ = update(m, *done)
+	m, cmd = update(m, propEvent("playlist-pos", "1"))
+	if findMsg[radioDoneMsg](cmd) != nil {
+		t.Fatal("autoplay repeated a lookup for the same position")
+	}
+
+	m, _ = update(m, plEvent(t, "c", "u0", "*u1", "u2", "u3"))
+	_, cmd = update(m, propEvent("playlist-pos", "2"))
+	if findMsg[radioDoneMsg](cmd) == nil || len(calls) != 2 {
+		t.Fatal("autoplay did not retry on the next song after an empty lookup")
+	}
+}
+
+func TestAutoplayShortcutPersistsAndDiscardsAnInFlightRefillWhenDisabled(t *testing.T) {
+	var calls []similarCall
+	m := radioModel(t, &calls, songs(1), nil)
+	var saved []bool
+	m.deps.SaveAutoplay = func(on bool) error {
+		saved = append(saved, on)
+		return nil
+	}
+	m, cmd := send(m, "A")
+	done := findMsg[radioDoneMsg](cmd)
+	if !m.autoplay || done == nil {
+		t.Fatal("A did not enable autoplay and refill the short queue")
+	}
+	m, _ = send(m, "A")
+	m, cmd = update(m, *done)
+	if m.autoplay || m.radioBusy || cmd != nil || !reflect.DeepEqual(saved, []bool{true, false}) {
+		t.Fatalf("disabled autoplay with values %v, got autoplay=%v busy=%v cmd=%v", saved, m.autoplay, m.radioBusy, cmd != nil)
+	}
+}
