@@ -134,7 +134,7 @@ func (m Model) help() string {
 	case modeSearch:
 		h = []string{"⏎ search", "esc close"}
 	case modeResults:
-		h = []string{"j/k move", "⏎ play", ":add queue", "/ search"}
+		h = []string{"↑/↓ move", "⏎ play", ":add queue", "/ search"}
 		if queued {
 			h = append(h, "⇥ queue")
 		}
@@ -1007,6 +1007,7 @@ func (m Model) helpRows() []string {
 		key("?", "open or close this help"),
 		key("/", "search bar (Enter runs it, Esc closes it)"),
 		key("j / k", "move in the results, the queue and the DJ popup"),
+		key("↑ / ↓", "move in the results and the DJ popup"),
 		key("Enter", "play the highlighted result or queue entry now"),
 		key("Tab", "switch between the results and the queue"),
 		key("x", "remove the highlighted queue entry"),

@@ -34,6 +34,7 @@ Keys that need no colon:
 | `:` | open the command line (below) |
 | `/` | search bar (Enter runs it, Esc closes it); the same as `:find` without a name |
 | `j` `k` | move in the results, the queue and the DJ popup |
+| `↑` `↓` | move in the results and the DJ popup |
 | Enter | play the highlighted result or queue entry now |
 | Tab | switch between the results and the queue |
 | `x` | remove the highlighted queue entry (`↑` `↓` or `J` `K` move it) |

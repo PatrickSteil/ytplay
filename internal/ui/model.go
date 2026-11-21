@@ -1036,13 +1036,13 @@ func (m Model) handleSearchDone(msg searchDoneMsg) (tea.Model, tea.Cmd) {
 // false when the key should fall through to the global keys.
 func (m Model) handleResultsKey(k string) (Model, tea.Cmd, bool) {
 	switch k {
-	case keyDown:
+	case keyDown, keyArrowDown:
 		if m.selected < len(m.results)-1 {
 			m.selected++
 		}
 		m.scrollIntoView()
 		return m, m.schedulePreview(), true
-	case keyUp:
+	case keyUp, keyArrowUp:
 		if m.selected > 0 {
 			m.selected--
 		}

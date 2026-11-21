@@ -264,9 +264,13 @@ func TestResultsNavigationAndEsc(t *testing.T) {
 	if m.selected != 0 {
 		t.Errorf("selected = %d, want 0 (clamped)", m.selected)
 	}
-	m, _ = send(m, "down", "up")
-	if m.selected != 0 {
-		t.Errorf("arrow keys must not move the results, selected = %d", m.selected)
+	m, _ = send(m, "down", "down", "down")
+	if m.selected != 2 {
+		t.Errorf("Down selected %d, want 2 (clamped)", m.selected)
+	}
+	m, _ = send(m, "up")
+	if m.selected != 1 {
+		t.Errorf("Up selected %d, want 1", m.selected)
 	}
 	m, _ = send(m, "esc")
 	if m.mode != modeNormal {

@@ -98,7 +98,7 @@ func TestTheFooterNamesExactlyTheKeysThatWorkHere(t *testing.T) {
 			{"? help", func(m Model) Model { return press(m, "?") }},
 		}},
 		{"the results are focused", withResultsAndQueue, []probe{
-			{"j/k move", func(m Model) Model { return press(m, "j") }},
+			{"↑/↓ move", func(m Model) Model { return press(m, "down") }},
 			{"⏎ play", func(m Model) Model { return press(m, "enter") }},
 			{":add queue", func(m Model) Model { return do(m, "add") }},
 			{"/ search", func(m Model) Model { return press(m, "/") }},
