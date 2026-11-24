@@ -17,7 +17,14 @@ import (
 // fakeServer listens on a unix socket and hands the accepted connection to fn.
 func fakeServer(t *testing.T, fn func(conn net.Conn)) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "mpv.sock")
+	// Unix socket paths are limited to ~104 bytes on macOS, and t.TempDir()
+	// embeds the test name under a long $TMPDIR, so use a short directory.
+	dir, err := os.MkdirTemp("", "mpv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
